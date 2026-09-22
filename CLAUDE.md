@@ -1,0 +1,39 @@
+# DashIt
+
+Local-first dashboard app. Read `ARCHITECTURE.md` before making design decisions — it is the
+source of truth for the data model, sync protocol, auth flows, sandboxing, and the phased roadmap.
+
+## Workspace
+
+Bun workspace (`bun install` at the root; Bun 1.3 uses the isolated linker, so each package has
+its own `node_modules`).
+
+- `packages/shared` — driver-agnostic core: `LocalStore` interface, schema/migrations, repositories
+  with cascade rules, dataflow graph helpers, ids, sort keys. No DOM, no Bun-only APIs at runtime.
+- `packages/app` — SvelteKit 2 / Svelte 5 (runes), Tailwind v4, shadcn-svelte. SPA only
+  (`ssr = false`, `adapter-static`). SvelteKit needs Vite; that is expected here.
+- `packages/backend` — Hono-on-Bun relay. Stores only ciphertext and WebAuthn public keys.
+
+## Commands
+
+- `bun test` — all unit tests (shared uses a `bun:sqlite` test double, `migrate(store, { crr: false })`).
+- `bun run typecheck` — `tsc` for shared and backend; `bun run check` adds `svelte-check`.
+- `bun run dev` — app dev server; `bun run dev:backend` — relay.
+- `bun run --filter app e2e` — Playwright (Chromium/Firefox/WebKit) against the dev server; `E2E_BASE_URL=... bunx playwright test` to target a running server. On non-Ubuntu hosts WebKit needs the `mcr.microsoft.com/playwright` Docker image with `--network host`. E2E files end in `.pw.ts` so `bun test` ignores them.
+
+## Rules that are easy to get wrong
+
+- Synced tables must stay CRR-compatible: explicit `PRIMARY KEY NOT NULL`, every non-PK column nullable or
+  `DEFAULT`ed, no FOREIGN KEY / CHECK / secondary UNIQUE. `test/migrate.test.ts` enforces this.
+- Schema changes are new entries in `MIGRATIONS` (additive only); never edit a shipped migration.
+- Deletes are soft (`deleted_at`); cascades live in `packages/shared/src/repo/*`, not in SQL.
+- IDs are UUIDv7 via `uuidv7()`; list ordering uses string `sort_key`s from `sort-key.ts`.
+- Components never write SQL; they call repository functions from `shared`.
+- `crsql_as_crr` / `crsql_begin_alter` / `crsql_commit_alter` must run outside an open transaction (the WASM build fails with "no such savepoint" otherwise); `migrate()` already does this.
+- Every `openStore()` sets `PRAGMA temp_store = MEMORY`; without it statement journals go through the VFS and writes are ~50x slower. WAL is unavailable on the OPFS VFS. Database names are `[A-Za-z0-9_.-]` only.
+- The relay must never receive plaintext content, datasource payloads, API keys, or the recovery key.
+
+## Bun conventions
+
+Use `bun <file>`, `bun test`, `bun install`, `bunx`. Bun loads `.env` itself. Use `Bun.serve()` /
+Hono, `bun:sqlite`, built-in `WebSocket`, `Bun.file`. Backend and shared use `bun:test`.

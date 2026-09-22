@@ -1,0 +1,20 @@
+{
+  "name": "dashit",
+  "type": "module",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun run --filter app dev",
+    "dev:backend": "bun run --filter backend dev",
+    "build": "bun run --filter app build",
+    "check": "bun run typecheck && bun run --filter app check",
+    "typecheck": "tsc --noEmit -p packages/shared && tsc --noEmit -p packages/backend",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^6.0.3"
+  }
+}

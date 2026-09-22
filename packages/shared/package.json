@@ -1,0 +1,12 @@
+{
+  "name": "shared",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "fractional-indexing": "^4.0.0"
+  }
+}
