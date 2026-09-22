@@ -1,4 +1,4 @@
-import { decodeSecrets, extractPath, MIN_POLL_INTERVAL_MS, type DatasourceRow } from "shared";
+import { bodyContentType, decodeSecrets, extractPath, methodHasBody, MIN_POLL_INTERVAL_MS, type DatasourceRow } from "shared";
 import { SvelteMap } from "svelte/reactivity";
 import type { Db } from "$lib/db/client.svelte";
 
@@ -101,19 +101,31 @@ export class DatasourceRuntime {
   }
 }
 
-/** One request for an external datasource: headers from its secrets, JSON body, optional path. */
+/**
+ * One request for an external datasource: headers and body from its secrets, optional response
+ * path. Variable interpolation (URL/headers/body), when it arrives, belongs here.
+ */
 export async function fetchDatasource(ds: DatasourceRow, signal?: AbortSignal): Promise<unknown> {
-  const { headers } = decodeSecrets(ds.secrets_ciphertext);
-  const res = await fetch(ds.url!, { method: ds.method ?? "GET", headers, signal, cache: "no-store" });
+  const { headers, body, body_type } = decodeSecrets(ds.secrets_ciphertext);
+  const method = ds.method ?? "GET";
+  const init: RequestInit = { method, headers: { ...headers }, signal, cache: "no-store" };
+  if (methodHasBody(method) && body) {
+    init.body = body;
+    // A user-supplied Content-Type wins over the body type's default.
+    if (!Object.keys(headers).some((k) => k.toLowerCase() === "content-type")) {
+      (init.headers as Record<string, string>)["Content-Type"] = bodyContentType(body_type);
+    }
+  }
+  const res = await fetch(ds.url!, init);
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`.trim());
   const text = await res.text();
-  let body: unknown;
+  let parsed: unknown;
   try {
-    body = JSON.parse(text);
+    parsed = JSON.parse(text);
   } catch {
-    body = text;
+    parsed = text;
   }
-  const value = extractPath(body, ds.response_path);
+  const value = extractPath(parsed, ds.response_path);
   if (value === undefined) throw new Error(`nothing at path ${ds.response_path}`);
   return value;
 }

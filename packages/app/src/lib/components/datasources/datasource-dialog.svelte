@@ -1,12 +1,19 @@
 <script lang="ts">
 	import {
+		BODY_TYPES,
+		csvToRecords,
 		decodeSecrets,
 		formatHeaderLines,
+		HTTP_METHODS,
+		methodHasBody,
 		MIN_POLL_INTERVAL_MS,
 		parseHeaderLines,
+		validateBody,
+		type BodyType,
 		type CreateDatasourceInput,
 		type DatasourceKind,
 		type DatasourceRow,
+		type DatasourceSecrets,
 		type ElementRow
 	} from 'shared';
 	import { toast } from 'svelte-sonner';
@@ -18,6 +25,9 @@
 	import { Textarea } from '$lib/components/ui/textarea';
 	import { getDb } from '$lib/db/context';
 	import { KIND_META } from '$lib/elements/kinds';
+	import UploadIcon from '@lucide/svelte/icons/upload';
+
+	const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 
 	let {
 		open = $bindable(false),
@@ -51,16 +61,56 @@
 	let method = $derived(editing?.method ?? 'GET');
 	let intervalSec = $derived(String(Math.round((editing?.poll_interval_ms ?? 60_000) / 1000)));
 	let responsePath = $derived(editing?.response_path ?? '');
-	let headerText = $derived(editing ? formatHeaderLines(decodeSecrets(editing.secrets_ciphertext).headers) : '');
+	const decoded = $derived(decodeSecrets(editing?.secrets_ciphertext));
+	let headerText = $derived(editing ? formatHeaderLines(decoded.headers) : '');
+	let bodyType = $derived<BodyType>(decoded.body_type);
+	let bodyText = $derived(decoded.body ?? '');
+
+	const BODY_LABEL: Record<BodyType, string> = { json: 'JSON', text: 'Text' };
 
 	let jsonError = $state<string | null>(null);
+	let bodyError = $state<string | null>(null);
 	let saving = $state(false);
+	let fileInput = $state<HTMLInputElement | null>(null);
+	let imported = $state<{ file: string; records: number | null } | null>(null);
+
+	/** Parses a local .json or .csv file into the static value; nothing leaves the device. */
+	async function importFile(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		input.value = '';
+		if (!file) return;
+		if (file.size > MAX_IMPORT_BYTES) {
+			toast.error('File too large', { description: 'Static datasources are capped at 5 MB.' });
+			return;
+		}
+		try {
+			const text = await file.text();
+			const isCsv = /\.csv$/i.test(file.name) || file.type === 'text/csv';
+			const value: unknown = isCsv ? csvToRecords(text) : JSON.parse(text);
+			staticJson = JSON.stringify(value, null, 2);
+			jsonError = null;
+			imported = { file: file.name, records: Array.isArray(value) ? value.length : null };
+			if (!name.trim()) name = file.name.replace(/\.[^.]+$/, '');
+		} catch (err) {
+			jsonError = `Could not import ${file.name}: ${err instanceof Error ? err.message : String(err)}`;
+		}
+	}
 
 	const elementTitle = $derived(new Map(editables.map((e) => [e.id, e.title || KIND_META[e.kind].label])));
 
 	function close() {
 		open = false;
 		jsonError = null;
+		bodyError = null;
+		imported = null;
+	}
+
+	/** Headers and body as stored in secrets_ciphertext; throws on an invalid JSON body. */
+	function secrets(): DatasourceSecrets {
+		const body = methodHasBody(method) && bodyText.trim() ? bodyText : undefined;
+		validateBody(body, bodyType);
+		return { headers: parseHeaderLines(headerText), body, body_type: bodyType };
 	}
 
 	async function save() {
@@ -78,13 +128,20 @@
 					}
 					await db.call('updateDatasource', editing.id, { name: n || editing.name, static_value: value });
 				} else if (kind === 'external') {
+					let sec: DatasourceSecrets;
+					try {
+						sec = secrets();
+					} catch (e) {
+						bodyError = e instanceof Error ? e.message : String(e);
+						return;
+					}
 					await db.call('updateDatasource', editing.id, {
 						name: n || editing.name,
 						url: url.trim(),
 						method,
 						poll_interval_ms: Math.max(MIN_POLL_INTERVAL_MS, Number(intervalSec) * 1000 || 60_000),
 						response_path: responsePath.trim() || null,
-						headers: parseHeaderLines(headerText)
+						secrets: sec
 					});
 				} else {
 					await db.call('updateDatasource', editing.id, { name: n || editing.name });
@@ -106,6 +163,13 @@
 					input = { kind: 'internal', name: n || `${elementTitle.get(sourceElement)} data`, source_element_id: sourceElement };
 				} else {
 					if (!url.trim()) return;
+					let sec: DatasourceSecrets;
+					try {
+						sec = secrets();
+					} catch (e) {
+						bodyError = e instanceof Error ? e.message : String(e);
+						return;
+					}
 					input = {
 						kind: 'external',
 						name: n || new URL(url.trim(), location.href).hostname,
@@ -114,7 +178,7 @@
 						method,
 						poll_interval_ms: Math.max(MIN_POLL_INTERVAL_MS, Number(intervalSec) * 1000 || 60_000),
 						response_path: responsePath.trim() || undefined,
-						headers: parseHeaderLines(headerText)
+						secrets: sec
 					};
 				}
 				await db.call('createDatasource', input);
@@ -155,9 +219,28 @@
 
 			{#if kind === 'static'}
 				<div class="grid gap-2">
-					<Label for="ds-json">JSON value</Label>
-					<Textarea id="ds-json" bind:value={staticJson} rows={8} class="font-mono text-xs" aria-invalid={jsonError !== null} />
+					<div class="flex items-center justify-between gap-2">
+						<Label for="ds-json">JSON value</Label>
+						<Button size="xs" variant="outline" onclick={() => fileInput?.click()}>
+							<UploadIcon class="size-3.5" />
+							Import file
+						</Button>
+						<input
+							bind:this={fileInput}
+							type="file"
+							accept=".json,.csv,application/json,text/csv"
+							class="hidden"
+							onchange={importFile}
+							data-testid="static-import"
+						/>
+					</div>
+					<Textarea id="ds-json" bind:value={staticJson} rows={8} class="font-mono text-xs" aria-invalid={jsonError !== null} oninput={() => (imported = null)} />
 					{#if jsonError}<p class="text-xs text-destructive">{jsonError}</p>{/if}
+					{#if imported}
+						<p class="text-xs text-muted-foreground" data-testid="import-summary">
+							{imported.records === null ? 'Imported' : `${imported.records} records`} from {imported.file}. CSV headers become field names; numbers and true/false are typed.
+						</p>
+					{/if}
 				</div>
 			{:else if kind === 'internal'}
 				<div class="grid gap-2">
@@ -181,7 +264,7 @@
 						<Select.Root type="single" bind:value={method}>
 							<Select.Trigger class="w-full" aria-label="Method">{method}</Select.Trigger>
 							<Select.Content>
-								{#each ['GET', 'POST'] as m (m)}
+								{#each HTTP_METHODS as m (m)}
 									<Select.Item value={m} label={m}>{m}</Select.Item>
 								{/each}
 							</Select.Content>
@@ -205,10 +288,38 @@
 				<div class="grid gap-2">
 					<Label for="ds-headers">Headers (one per line, <code>Key: Value</code>)</Label>
 					<Textarea id="ds-headers" bind:value={headerText} rows={3} class="font-mono text-xs" placeholder="Authorization: Bearer …" />
-					<p class="text-xs text-muted-foreground">
-						The API must allow browser requests (CORS). Without an account, headers are stored unencrypted on this device.
-					</p>
 				</div>
+				{#if methodHasBody(method)}
+					<div class="grid gap-2" data-testid="body-section">
+						<div class="flex items-center justify-between gap-2">
+							<Label for="ds-body">Body</Label>
+							<Select.Root type="single" value={bodyType} onValueChange={(v) => (bodyType = v as BodyType)}>
+								<Select.Trigger class="h-7 w-24 text-xs" aria-label="Body type">{BODY_LABEL[bodyType]}</Select.Trigger>
+								<Select.Content>
+									{#each BODY_TYPES as t (t)}
+										<Select.Item value={t} label={BODY_LABEL[t]}>{BODY_LABEL[t]}</Select.Item>
+									{/each}
+								</Select.Content>
+							</Select.Root>
+						</div>
+						<Textarea
+							id="ds-body"
+							bind:value={bodyText}
+							rows={6}
+							class="font-mono text-xs"
+							placeholder={bodyType === 'json' ? '{ "query": "…" }' : 'raw request body'}
+							aria-invalid={bodyError !== null}
+							oninput={() => (bodyError = null)}
+						/>
+						{#if bodyError}<p class="text-xs text-destructive">{bodyError}</p>{/if}
+						<p class="text-xs text-muted-foreground">
+							Sent as <code>{bodyType === 'json' ? 'application/json' : 'text/plain'}</code> unless you set a <code>Content-Type</code> header.
+						</p>
+					</div>
+				{/if}
+				<p class="text-xs text-muted-foreground">
+					The API must allow browser requests (CORS). Without an account, headers and body are stored unencrypted on this device.
+				</p>
 			{/if}
 		</div>
 		<Dialog.Footer>

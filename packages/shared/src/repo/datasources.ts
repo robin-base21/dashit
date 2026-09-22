@@ -2,7 +2,7 @@ import { uuidv7 } from "../ids.ts";
 import { type LocalStore, type SqlValue, queryOne } from "../local-store.ts";
 import { DATASOURCE_KINDS, type DatasourceRow, type FetchMode } from "../types.ts";
 import { removeEdgesForNode } from "./edges.ts";
-import { encodeSecrets, MIN_POLL_INTERVAL_MS } from "../secrets.ts";
+import { encodeSecrets, hasSecrets, MIN_POLL_INTERVAL_MS, type DatasourceSecrets } from "../secrets.ts";
 
 export type CreateDatasourceInput =
   | { kind: "static"; name: string; value: unknown }
@@ -15,8 +15,8 @@ export type CreateDatasourceInput =
       method?: string;
       poll_interval_ms?: number;
       response_path?: string;
-      /** Request headers (API keys live here). Stored via setDatasourceSecrets. */
-      headers?: Record<string, string>;
+      /** Headers and request body (API keys live here); stored in secrets_ciphertext. */
+      secrets?: DatasourceSecrets;
     };
 
 export async function createDatasource(
@@ -51,7 +51,7 @@ export async function createDatasource(
           input.method ?? "GET",
           Math.max(MIN_POLL_INTERVAL_MS, input.poll_interval_ms ?? 60_000),
           input.response_path ?? null,
-          input.headers && Object.keys(input.headers).length ? encodeSecrets({ headers: input.headers }) : null,
+          input.secrets && hasSecrets(input.secrets) ? encodeSecrets(input.secrets) : null,
           now,
           now,
         ],
@@ -78,7 +78,7 @@ export async function updateDatasource(
     method?: string;
     poll_interval_ms?: number;
     response_path?: string | null;
-    headers?: Record<string, string>;
+    secrets?: DatasourceSecrets;
     static_value?: unknown;
   },
   now: number = Date.now(),
@@ -90,9 +90,9 @@ export async function updateDatasource(
   if (patch.method !== undefined) sets.push("method = ?"), params.push(patch.method);
   if (patch.poll_interval_ms !== undefined) sets.push("poll_interval_ms = ?"), params.push(Math.max(MIN_POLL_INTERVAL_MS, patch.poll_interval_ms));
   if (patch.response_path !== undefined) sets.push("response_path = ?"), params.push(patch.response_path);
-  if (patch.headers !== undefined) {
+  if (patch.secrets !== undefined) {
     sets.push("secrets_ciphertext = ?");
-    params.push(Object.keys(patch.headers).length ? encodeSecrets({ headers: patch.headers }) : null);
+    params.push(hasSecrets(patch.secrets) ? encodeSecrets(patch.secrets) : null);
   }
   if (patch.static_value !== undefined) sets.push("static_value_json = ?"), params.push(JSON.stringify(patch.static_value));
   params.push(id);

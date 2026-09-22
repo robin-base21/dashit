@@ -110,3 +110,70 @@ test('a failing endpoint surfaces its error without breaking the page', async ({
 	await expect(card.getByTestId('fetch-error')).toContainText('HTTP 500');
 	await expect(card.getByTestId('preview')).toContainText('Error');
 });
+
+test('POST datasources send a JSON or text body; a Content-Type header overrides the default', async ({ page }) => {
+	const seen: { method: string; contentType: string; body: string | null; token: string }[] = [];
+	await page.route('https://api.example.test/graphql', async (route) => {
+		const req = route.request();
+		seen.push({
+			method: req.method(),
+			contentType: req.headers()['content-type'] ?? '',
+			body: req.postData(),
+			token: req.headers()['x-token'] ?? ''
+		});
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' },
+			body: JSON.stringify({ data: { items: [{ id: 1 }, { id: 2 }] } })
+		});
+	});
+
+	await page.goto('/datasources');
+	await expect(page.getByRole('button', { name: 'New datasource' })).toBeVisible({ timeout: 60_000 });
+	await page.getByRole('button', { name: 'New datasource' }).click();
+	await page.getByRole('button', { name: 'Type', exact: true }).click();
+	await page.getByRole('option', { name: 'External API (HTTP polling)' }).click();
+
+	// GET shows no body section.
+	await expect(page.getByTestId('body-section')).toHaveCount(0);
+	await page.getByRole('button', { name: 'Method', exact: true }).click();
+	await page.getByRole('option', { name: 'POST' }).click();
+	await expect(page.getByTestId('body-section')).toBeVisible();
+
+	await page.getByLabel('Name').fill('GraphQL');
+	await page.getByLabel('URL').fill('https://api.example.test/graphql');
+	await page.getByLabel('Response path').fill('data.items');
+	await page.getByLabel(/Headers/).fill('X-Token: t');
+
+	// Invalid JSON is rejected before saving.
+	await page.getByLabel('Body', { exact: true }).fill('{ not json');
+	await page.getByRole('button', { name: 'Create' }).click();
+	await expect(page.getByText(/not valid JSON/)).toBeVisible();
+	await expect(page.getByRole('dialog')).toBeVisible();
+
+	await page.getByLabel('Body', { exact: true }).fill('{"query":"{ items { id } }"}');
+	await page.getByRole('button', { name: 'Create' }).click();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+
+	const card = page.locator('[data-datasource-id]', { hasText: 'GraphQL' });
+	await card.getByRole('button', { name: 'Fetch now' }).click();
+	await expect(card.getByTestId('preview')).toContainText('"id": 1');
+	expect(seen).toHaveLength(1);
+	expect(seen[0]).toMatchObject({ method: 'POST', contentType: 'application/json', token: 't' });
+	expect(JSON.parse(seen[0]!.body!)).toEqual({ query: '{ items { id } }' });
+
+	// Edit → text body with an explicit Content-Type header; the header wins and the body is kept verbatim.
+	await card.getByRole('button', { name: 'Edit datasource' }).click();
+	await expect(page.getByLabel('Body', { exact: true })).toHaveValue('{"query":"{ items { id } }"}');
+	await page.getByRole('button', { name: 'Body type', exact: true }).click();
+	await page.getByRole('option', { name: 'Text' }).click();
+	await page.getByLabel('Body', { exact: true }).fill('id,name\n1,a');
+	await page.getByLabel(/Headers/).fill('X-Token: t2\nContent-Type: text/csv');
+	await page.getByRole('button', { name: 'Save' }).click();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+
+	await card.getByRole('button', { name: 'Fetch now' }).click();
+	await expect.poll(() => seen.length).toBe(2);
+	expect(seen[1]).toMatchObject({ method: 'POST', contentType: 'text/csv', body: 'id,name\n1,a', token: 't2' });
+});

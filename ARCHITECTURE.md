@@ -209,7 +209,7 @@ CREATE TABLE datasources (
   method             TEXT,                     -- GET | POST ...
   poll_interval_ms   INTEGER,
   response_path      TEXT,                     -- JSON pointer into the response body, optional
-  secrets_ciphertext BLOB,                     -- AES-GCM({headers, query}) under K_ds (§4.1). Anonymous users (no DEK) store plaintext JSON here; encrypted on account creation (§4.9).
+  secrets_ciphertext BLOB,                     -- AES-GCM({headers, body, body_type}) under K_ds (§4.1). Anonymous users (no DEK) store plaintext JSON here; encrypted on account creation (§4.9).
   -- internal
   source_element_id  TEXT,                     -- -> elements.id (an editable)
   -- static
@@ -670,7 +670,8 @@ Framework **Hono on Bun**; storage **`bun:sqlite`** (metadata tables plus envelo
 
 ### Phase 1.5 — Charts, external datasources, transformers — **done 2026-09-22**
 - `chart` observable on LayerChart 2.5 via shadcn-svelte's chart container: bar (grouped, optional horizontal), line, area (stacked), pie, radial (`ArcChart`), radar (declarative `Chart radial` with a `marks` snippet — the imperative `<Svg center>` route did not center in 2.5). Config `{ type, x, y[], horizontal }` in `elements.config_json`; the bind-data dialog picks type, x field and series from the bound dataset's fields.
-- `external` datasources (polling): `DatasourceRuntime` on the main thread owns one timer per *active* source (min 5 s), pauses while the document is hidden, fetches immediately on activation/visibility, and writes `datasource_cache`; the engine reads the cache and shows stale-but-present values with any fetch error alongside. "Fetch now" works for inactive sources too. Headers live in `secrets_ciphertext` as plaintext JSON until an account exists (§4.9); `response_path` accepts JSON Pointer or dot paths.
+- `static` datasources can be seeded from a local `.json` or `.csv` file (parsed on-device by `shared/csv.ts`: delimiter detection, RFC 4180 quoting, typed cells; 5 MB cap since the value lives in a synced row).
+- `external` datasources (polling): `DatasourceRuntime` on the main thread owns one timer per *active* source (min 5 s), pauses while the document is hidden, fetches immediately on activation/visibility, and writes `datasource_cache`; the engine reads the cache and shows stale-but-present values with any fetch error alongside. "Fetch now" works for inactive sources too. Methods GET/POST/PUT/PATCH/DELETE; POST/PUT/PATCH carry a JSON (validated) or text body, `Content-Type` defaulting from the body type unless a header sets it. Headers and body live together in `secrets_ciphertext` (both routinely carry credentials) as plaintext JSON until an account exists (§4.9); `response_path` accepts JSON Pointer or dot paths.
 - Transformer editor (`/transformers/[id]`): ordered inputs on `edges`, code textarea (Tab, Ctrl/⌘+Enter to run, Ctrl/⌘+S to save), run console with captured `console.log`, live status, append-only versions with restore. Editor runs use a page-local `Sandbox`; live evaluation is the engine's.
 - Engine fix: a transformer's re-run signature now includes its current version id and timeout — previously saving new code did not re-evaluate.
 - **Acceptance met** (Chromium + Firefox): all six chart types render from a static source and survive reload; a mocked API is polled only while a visible chart consumes it, sends the stored `Authorization` header, stops within one interval of hiding, and keeps its last value; a 500 surfaces as an error without breaking the page; a transformer groups rows, feeds a bar chart (grouped labels, not raw rows), reports `live: error` on a throwing version and recovers on restore.
