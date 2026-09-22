@@ -31,3 +31,9 @@ jobs:
         working-directory: packages/app
       - run: bunx playwright test
         working-directory: packages/app
+      - name: Offline e2e against the production build
+        working-directory: packages/app
+        run: |
+          bun run build
+          (bun run preview -- --port 4174 --strictPort &) && sleep 3
+          E2E_BASE_URL=http://localhost:4174 bunx playwright test offline

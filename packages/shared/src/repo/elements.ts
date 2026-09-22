@@ -30,6 +30,22 @@ export async function listElements(store: LocalStore): Promise<ElementRow[]> {
   return store.query<ElementRow>(`SELECT * FROM elements WHERE deleted_at IS NULL ORDER BY created_at, id`);
 }
 
+export interface ElementWithPlacement extends ElementRow {
+  /** 0/1: has a live placement row (may still be hidden). */
+  placed: number;
+  hidden: number;
+}
+
+export async function listElementsWithPlacement(store: LocalStore): Promise<ElementWithPlacement[]> {
+  return store.query<ElementWithPlacement>(
+    `SELECT e.*, (p.element_id IS NOT NULL) AS placed, COALESCE(p.hidden, 0) AS hidden
+     FROM elements e
+     LEFT JOIN placements p ON p.element_id = e.id AND p.deleted_at IS NULL
+     WHERE e.deleted_at IS NULL
+     ORDER BY e.created_at, e.id`,
+  );
+}
+
 export async function updateElement(
   store: LocalStore,
   id: string,
@@ -105,6 +121,18 @@ export async function movePlacement(
     `UPDATE placements SET x = ?, y = ?, w = ?, h = ?, updated_at = ? WHERE element_id = ? AND deleted_at IS NULL`,
     [rect.x, rect.y, rect.w, rect.h, now, elementId],
   );
+}
+
+/** Writes several placement rects at once (after a shove-down/compaction pass). */
+export async function applyLayout(
+  store: LocalStore,
+  rects: { id: string; x: number; y: number; w: number; h: number }[],
+  now: number = Date.now(),
+): Promise<void> {
+  if (!rects.length) return;
+  await store.transaction(async (tx) => {
+    for (const r of rects) await movePlacement(tx, r.id, r, now);
+  });
 }
 
 export async function unplaceElement(store: LocalStore, elementId: string, now: number = Date.now()): Promise<void> {

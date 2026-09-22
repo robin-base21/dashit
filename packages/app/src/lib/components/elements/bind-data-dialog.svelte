@@ -1,0 +1,132 @@
+<script lang="ts">
+	import { AGGREGATION_FNS, fieldsOf, type AggregationConfig, type ElementRow } from 'shared';
+	import { toast } from 'svelte-sonner';
+	import * as Dialog from '$lib/components/ui/dialog';
+	import * as Select from '$lib/components/ui/select';
+	import { Button } from '$lib/components/ui/button';
+	import { Label } from '$lib/components/ui/label';
+	import { getDb } from '$lib/db/context';
+	import { liveQuery } from '$lib/db/client.svelte';
+	import { getDataflow } from '$lib/dataflow/engine.svelte';
+	import { parseAggregationConfig } from '$lib/elements/config';
+
+	let { element, open = $bindable(false) }: { element: ElementRow; open?: boolean } = $props();
+
+	const db = getDb();
+	const dataflow = getDataflow();
+
+	const datasources = liveQuery(db, (d) => d.call('listDatasources'), ['datasources']);
+	const transformers = liveQuery(db, (d) => d.call('listTransformers'), ['transformers']);
+
+	const options = $derived([
+		...(datasources.value ?? []).map((d) => ({ key: `datasource:${d.id}` as const, label: d.name, group: 'Datasources' })),
+		...(transformers.value ?? []).map((t) => ({ key: `transformer:${t.id}` as const, label: t.name, group: 'Transformers' }))
+	]);
+
+	const current = $derived(dataflow.producersOf(element.id)[0] ?? null);
+	// Writable deriveds: seeded from the element, editable in the form, re-seeded when the element changes.
+	let producer = $derived<string>(current ?? '');
+	let config = $derived<AggregationConfig>(parseAggregationConfig(element.config_json));
+
+	function cancel() {
+		producer = current ?? '';
+		config = parseAggregationConfig(element.config_json);
+		open = false;
+	}
+
+	const fields = $derived(producer ? fieldsOf(dataflow.get(producer as `${'datasource' | 'transformer'}:${string}`).value) : []);
+
+	async function save() {
+		try {
+			if (producer !== (current ?? '')) {
+				for (const e of await db.call('listEdges')) {
+					if (e.consumer_kind === 'element' && e.consumer_id === element.id) await db.call('removeEdge', e.id);
+				}
+				if (producer) {
+					const [kind, id] = producer.split(':') as ['datasource' | 'transformer', string];
+					await db.call('addEdge', { producer_kind: kind, producer_id: id, consumer_kind: 'element', consumer_id: element.id });
+				}
+			}
+			if (element.kind === 'aggregation') {
+				const next: AggregationConfig = { fn: config.fn };
+				if (config.field) next.field = config.field;
+				await db.call('updateElement', element.id, { config: next as unknown as Record<string, unknown> });
+			}
+			open = false;
+		} catch (e) {
+			toast.error('Could not bind data', { description: e instanceof Error ? e.message : String(e) });
+		}
+	}
+</script>
+
+<Dialog.Root bind:open>
+	<Dialog.Content class="sm:max-w-md">
+		<Dialog.Header>
+			<Dialog.Title>Bind data</Dialog.Title>
+			<Dialog.Description>Choose what “{element.title}” reads from.</Dialog.Description>
+		</Dialog.Header>
+
+		<div class="grid gap-4">
+			<div class="grid gap-2">
+				<Label>Source</Label>
+				<Select.Root type="single" bind:value={producer}>
+					<Select.Trigger class="w-full" aria-label="Source">
+						{options.find((o) => o.key === producer)?.label ?? 'Nothing bound'}
+					</Select.Trigger>
+					<Select.Content>
+						<Select.Item value="" label="Nothing bound">Nothing bound</Select.Item>
+						{#each ['Datasources', 'Transformers'] as group (group)}
+							{@const items = options.filter((o) => o.group === group)}
+							{#if items.length}
+								<Select.Group>
+									<Select.GroupHeading>{group}</Select.GroupHeading>
+									{#each items as o (o.key)}
+										<Select.Item value={o.key} label={o.label}>{o.label}</Select.Item>
+									{/each}
+								</Select.Group>
+							{/if}
+						{/each}
+					</Select.Content>
+				</Select.Root>
+				{#if options.length === 0}
+					<p class="text-xs text-muted-foreground">No datasources yet. Create one under Datasources.</p>
+				{/if}
+			</div>
+
+			{#if element.kind === 'aggregation'}
+				<div class="grid grid-cols-2 gap-3">
+					<div class="grid gap-2">
+						<Label>Function</Label>
+						<Select.Root type="single" value={config.fn} onValueChange={(v) => (config = { ...config, fn: v as AggregationConfig['fn'] })}>
+							<Select.Trigger class="w-full" aria-label="Function">{config.fn}</Select.Trigger>
+							<Select.Content>
+								{#each AGGREGATION_FNS as fn (fn)}
+									<Select.Item value={fn} label={fn}>{fn}</Select.Item>
+								{/each}
+							</Select.Content>
+						</Select.Root>
+					</div>
+					<div class="grid gap-2">
+						<Label>Field</Label>
+						<Select.Root type="single" value={config.field ?? ''} onValueChange={(v) => (config = { ...config, field: v || undefined })}>
+							<Select.Trigger class="w-full" aria-label="Field">{config.field ?? (config.fn === 'count' ? 'All records' : 'Pick a field')}</Select.Trigger>
+							<Select.Content>
+								{#if config.fn === 'count'}
+									<Select.Item value="" label="All records">All records</Select.Item>
+								{/if}
+								{#each fields as f (f)}
+									<Select.Item value={f} label={f}>{f}</Select.Item>
+								{/each}
+							</Select.Content>
+						</Select.Root>
+					</div>
+				</div>
+			{/if}
+		</div>
+
+		<Dialog.Footer>
+			<Button variant="outline" onclick={cancel}>Cancel</Button>
+			<Button onclick={save}>Save</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>

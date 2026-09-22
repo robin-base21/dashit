@@ -656,13 +656,17 @@ Framework **Hono on Bun**; storage **`bun:sqlite`** (metadata tables plus envelo
 - `packages/backend`: `Bun.serve` skeleton with `/api/v1/health`.
 - **Acceptance met:** spike passes in Chromium, Firefox, and WebKit with no COOP/COEP (§1.4). cr-sqlite is confirmed.
 
-### Phase 1 — MVP: single device, local only
-- cr-sqlite build with the CRR-compatible schema and `crsql_as_crr` from the start (no relay yet).
-- Service worker + manifest; `ssr=false`, `adapter-static`.
-- Sidebar, grid (drag/place/resize/hide/delete, shove-down collision), unified Unplaced/Hidden panel.
-- Editables (task, checklist, table) with full CRUD on the shared `task_items` model; aggregation observable; `static` and `internal` datasources; sync-free scheduler.
-- Export/Import JSON; eviction banner + 24 h toast (anonymous mode is the only mode in this phase).
-- **Acceptance:** create a checklist, place it, tick items, nest a sub-task under an item, bind a count aggregation and watch it update; drop an element onto an occupied area and see occupants shove down; hide/unhide/delete; reload the page and everything persists; load the URL with the network disabled and the app opens with data.
+### Phase 1 — MVP: single device, local only — **done 2026-09-22**
+- cr-sqlite build with the CRR-compatible schema and `crsql_as_crr` from the start; `db.worker.ts` owns the store and exposes the `shared` repository `commands` over a typed RPC (`Db.call`), so every transaction runs where the database lives; `liveQuery()` re-runs reads after commits via `createSubscriber`.
+- Service worker precaches the build and the SPA shell (fetched via the root URL — static hosts do not always expose `/index.html`); `ssr=false`, `adapter-static`; web manifest.
+- Route groups: bare `src/routes/+layout.svelte`, DB-owning shell in `(app)/+layout.svelte`; `/spike` stays outside the shell because two owners of the OPFS access-handle pool cannot coexist.
+- Single-tab ownership via `navigator.locks` (`ifAvailable`); the database is opened only after the lock is won, otherwise a second tab would fail the OPFS probe and silently open a different IndexedDB database.
+- Sidebar (icons), grid (drag/place/resize/hide/delete, shove-down + compaction, live preview), unified Unplaced/Hidden panel, create dialog.
+- Editables on the shared `task_items` model (tree, collapsed-by-default checklists, nested add) and typed tables (per-cell rows); aggregation observable with a bind-data dialog; `static` and `internal` datasources page with live previews and the active badge.
+- Dataflow engine: async DAG scheduler with input-signature short-circuiting; transformers already execute in the sandbox (UI arrives in 1.5).
+- Export/Import JSON (upsert by PK); Settings with storage status, `persist()` request, eviction banner and once-a-day toast.
+- **Acceptance met** (Playwright, Chromium + Firefox, plus offline against the production build): create a checklist, place it, tick items, nest a sub-task; bind an aggregation (`sum of done`) that updates live as items are ticked; hiding the aggregation deactivates its datasource and unhiding restores it; drop onto an occupied area shoves occupants down; hide/unhide/delete; reload persists; the URL opens offline with data; export → import into a fresh profile restores the element.
+- Findings: bits-ui dialogs swallow pointer events during their exit animation (tests wait for the dialog to detach); `getByRole` ignores `hasText`; default names computed from UI state race rapid clicks — defaults are now computed inside repository transactions.
 
 ### Phase 1.5 — Charts, external datasources, transformers
 - `chart` observable (shadcn-svelte Charts / LayerChart: bar, line, area, pie, radar, radial).

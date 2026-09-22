@@ -28,7 +28,10 @@ its own `node_modules`).
 - Schema changes are new entries in `MIGRATIONS` (additive only); never edit a shipped migration.
 - Deletes are soft (`deleted_at`); cascades live in `packages/shared/src/repo/*`, not in SQL.
 - IDs are UUIDv7 via `uuidv7()`; list ordering uses string `sort_key`s from `sort-key.ts`.
-- Components never write SQL; they call repository functions from `shared`.
+- Components never write SQL; they call repository functions from `shared` through `db.call('<command>', ...)` — the DB worker runs `commands` from `packages/shared/src/repo/index.ts`. Reads that must stay fresh use `liveQuery(db, fn, tables)`.
+- Any default value that depends on existing rows (names, sort keys) is computed inside the repository transaction, never from UI state.
+- Routes: `src/routes/+layout.svelte` is bare; `(app)/+layout.svelte` owns the DB, dataflow engine and shell. Anything that must not open the database (like `/spike`) lives outside `(app)`.
+- Before editing `.svelte`/`.svelte.ts` files load the `svelte-code-writer` skill and run `bunx @sveltejs/mcp svelte-autofixer <file>` on what you changed.
 - `crsql_as_crr` / `crsql_begin_alter` / `crsql_commit_alter` must run outside an open transaction (the WASM build fails with "no such savepoint" otherwise); `migrate()` already does this.
 - Every `openStore()` sets `PRAGMA temp_store = MEMORY`; without it statement journals go through the VFS and writes are ~50x slower. WAL is unavailable on the OPFS VFS. Database names are `[A-Za-z0-9_.-]` only.
 - The relay must never receive plaintext content, datasource payloads, API keys, or the recovery key.
