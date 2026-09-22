@@ -9,6 +9,8 @@
 	import { liveQuery } from '$lib/db/client.svelte';
 	import { getDataflow } from '$lib/dataflow/engine.svelte';
 	import { parseAggregationConfig } from '$lib/elements/config';
+	import { CHART_TYPES, CHART_TYPE_LABEL, parseChartConfig, type ChartConfig, type ChartType } from '$lib/elements/chart-config';
+	import { Checkbox } from '$lib/components/ui/checkbox';
 
 	let { element, open = $bindable(false) }: { element: ElementRow; open?: boolean } = $props();
 
@@ -27,11 +29,18 @@
 	// Writable deriveds: seeded from the element, editable in the form, re-seeded when the element changes.
 	let producer = $derived<string>(current ?? '');
 	let config = $derived<AggregationConfig>(parseAggregationConfig(element.config_json));
+	let chart = $derived<ChartConfig>(parseChartConfig(element.config_json));
 
 	function cancel() {
 		producer = current ?? '';
 		config = parseAggregationConfig(element.config_json);
+		chart = parseChartConfig(element.config_json);
 		open = false;
+	}
+
+	function toggleSeries(field: string, on: boolean) {
+		const y = on ? [...chart.y.filter((f) => f !== field), field] : chart.y.filter((f) => f !== field);
+		chart = { ...chart, y };
 	}
 
 	const fields = $derived(producer ? fieldsOf(dataflow.get(producer as `${'datasource' | 'transformer'}:${string}`).value) : []);
@@ -51,6 +60,8 @@
 				const next: AggregationConfig = { fn: config.fn };
 				if (config.field) next.field = config.field;
 				await db.call('updateElement', element.id, { config: next as unknown as Record<string, unknown> });
+			} else if (element.kind === 'chart') {
+				await db.call('updateElement', element.id, { config: { ...chart } as unknown as Record<string, unknown> });
 			}
 			open = false;
 		} catch (e) {
@@ -92,6 +103,55 @@
 					<p class="text-xs text-muted-foreground">No datasources yet. Create one under Datasources.</p>
 				{/if}
 			</div>
+
+			{#if element.kind === 'chart'}
+				<div class="grid grid-cols-2 gap-3">
+					<div class="grid gap-2">
+						<Label>Chart type</Label>
+						<Select.Root type="single" value={chart.type} onValueChange={(v) => (chart = { ...chart, type: v as ChartType })}>
+							<Select.Trigger class="w-full" aria-label="Chart type">{CHART_TYPE_LABEL[chart.type]}</Select.Trigger>
+							<Select.Content>
+								{#each CHART_TYPES as t (t)}
+									<Select.Item value={t} label={CHART_TYPE_LABEL[t]}>{CHART_TYPE_LABEL[t]}</Select.Item>
+								{/each}
+							</Select.Content>
+						</Select.Root>
+					</div>
+					<div class="grid gap-2">
+						<Label>{chart.type === 'pie' || chart.type === 'radial' ? 'Label field' : 'X axis field'}</Label>
+						<Select.Root type="single" value={chart.x} onValueChange={(v) => (chart = { ...chart, x: v })}>
+							<Select.Trigger class="w-full" aria-label="X field">{chart.x || 'Record index'}</Select.Trigger>
+							<Select.Content>
+								<Select.Item value="" label="Record index">Record index</Select.Item>
+								{#each fields as f (f)}
+									<Select.Item value={f} label={f}>{f}</Select.Item>
+								{/each}
+							</Select.Content>
+						</Select.Root>
+					</div>
+				</div>
+				<div class="grid gap-2">
+					<Label>{chart.type === 'pie' || chart.type === 'radial' ? 'Value field' : 'Series (numeric fields)'}</Label>
+					{#if fields.length === 0}
+						<p class="text-xs text-muted-foreground">Bind a source with records to pick fields.</p>
+					{:else}
+						<div class="flex flex-wrap gap-2" role="group" aria-label="Series">
+							{#each fields.filter((f) => f !== chart.x) as f (f)}
+								<label class="flex items-center gap-1.5 rounded-md border px-2 py-1 text-sm">
+									<Checkbox checked={chart.y.includes(f)} onCheckedChange={(v) => toggleSeries(f, v === true)} aria-label={f} />
+									{f}
+								</label>
+							{/each}
+						</div>
+					{/if}
+				</div>
+				{#if chart.type === 'bar'}
+					<label class="flex items-center gap-2 text-sm">
+						<Checkbox checked={chart.horizontal === true} onCheckedChange={(v) => (chart = { ...chart, horizontal: v === true })} aria-label="Horizontal bars" />
+						Horizontal bars
+					</label>
+				{/if}
+			{/if}
 
 			{#if element.kind === 'aggregation'}
 				<div class="grid grid-cols-2 gap-3">

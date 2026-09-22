@@ -55,6 +55,10 @@ export async function addEdge(store: LocalStore, input: AddEdgeInput, now: numbe
   });
 }
 
+export async function setEdgePosition(store: LocalStore, id: string, position: number): Promise<void> {
+  await store.exec(`UPDATE edges SET position = ? WHERE id = ? AND deleted_at IS NULL`, [position, id]);
+}
+
 export async function removeEdge(store: LocalStore, id: string, now: number = Date.now()): Promise<void> {
   await store.exec(`UPDATE edges SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL`, [now, id]);
 }

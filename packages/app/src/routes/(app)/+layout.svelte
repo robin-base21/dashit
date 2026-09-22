@@ -8,6 +8,7 @@
 	import { setDb } from '$lib/db/context';
 	import { UiState, setUi } from '$lib/state/ui.svelte';
 	import { Dataflow, setDataflow } from '$lib/dataflow/engine.svelte';
+	import { DatasourceRuntime, setRuntime } from '$lib/dataflow/runtime-context';
 	import { runEvictionCheck } from '$lib/storage/status.svelte';
 	import { downloadExport } from '$lib/storage/backup';
 	import { Button } from '$lib/components/ui/button';
@@ -30,15 +31,22 @@
 
 	const dataflow = new Dataflow(db);
 	setDataflow(dataflow);
+	const runtime = new DatasourceRuntime(db);
+	setRuntime(runtime);
+	dataflow.externalRuntime = runtime;
 
 	const boot = tabLock.then(async (owns) => {
 		if (!owns) return false;
 		await db.open();
+		runtime.start();
 		dataflow.start();
 		void runEvictionCheck(db, () => downloadExport(db));
 		return true;
 	});
-	onDestroy(() => dataflow.stop());
+	onDestroy(() => {
+		dataflow.stop();
+		runtime.stop();
+	});
 </script>
 
 {#await boot}

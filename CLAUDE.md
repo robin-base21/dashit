@@ -30,6 +30,8 @@ its own `node_modules`).
 - IDs are UUIDv7 via `uuidv7()`; list ordering uses string `sort_key`s from `sort-key.ts`.
 - Components never write SQL; they call repository functions from `shared` through `db.call('<command>', ...)` — the DB worker runs `commands` from `packages/shared/src/repo/index.ts`. Reads that must stay fresh use `liveQuery(db, fn, tables)`.
 - Any default value that depends on existing rows (names, sort keys) is computed inside the repository transaction, never from UI state.
+- `packages/shared/src/repo/*` modules are spread into the RPC `commands` map: export only `(store, ...args) => Promise` functions there; put constants and pure helpers in `packages/shared/src/*.ts`.
+- Charts: LayerChart 2.5 simplified components (`BarChart`, `LineChart`, `AreaChart`, `PieChart`, `ArcChart`) inside `ChartUi.Container`; radar uses the declarative `<Chart radial>` + `{#snippet marks()}`. Load the `svelte-layerchart` skill before touching chart code.
 - Routes: `src/routes/+layout.svelte` is bare; `(app)/+layout.svelte` owns the DB, dataflow engine and shell. Anything that must not open the database (like `/spike`) lives outside `(app)`.
 - Before editing `.svelte`/`.svelte.ts` files load the `svelte-code-writer` skill and run `bunx @sveltejs/mcp svelte-autofixer <file>` on what you changed.
 - `crsql_as_crr` / `crsql_begin_alter` / `crsql_commit_alter` must run outside an open transaction (the WASM build fails with "no such savepoint" otherwise); `migrate()` already does this.

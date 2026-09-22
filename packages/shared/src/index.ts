@@ -18,3 +18,5 @@ export * from "./repo/export.ts";
 export * from "./repo/index.ts";
 export * from "./grid-layout.ts";
 export * from "./aggregate.ts";
+export * from "./secrets.ts";
+export * from "./json-path.ts";

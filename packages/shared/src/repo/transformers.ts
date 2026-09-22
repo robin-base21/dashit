@@ -44,6 +44,26 @@ export async function saveTransformerVersion(
   return id;
 }
 
+export async function updateTransformer(
+  store: LocalStore,
+  id: string,
+  patch: { name?: string; timeout_ms?: number },
+  now: number = Date.now(),
+): Promise<void> {
+  const sets = ["updated_at = ?"];
+  const params: (string | number)[] = [now];
+  if (patch.name !== undefined) {
+    sets.push("name = ?");
+    params.push(patch.name);
+  }
+  if (patch.timeout_ms !== undefined) {
+    sets.push("timeout_ms = ?");
+    params.push(Math.max(100, Math.round(patch.timeout_ms)));
+  }
+  params.push(id);
+  await store.exec(`UPDATE transformers SET ${sets.join(", ")} WHERE id = ? AND deleted_at IS NULL`, params);
+}
+
 export async function setCurrentVersion(
   store: LocalStore,
   transformerId: string,

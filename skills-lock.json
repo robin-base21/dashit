@@ -18,6 +18,12 @@
       "sourceType": "github",
       "skillPath": "plugins/claude/svelte/skills/svelte-core-bestpractices/SKILL.md",
       "computedHash": "98b4ee346ac45e13740c9f3353b604d5c6e844c96cdc8867052fa961cbdb525d"
+    },
+    "svelte-layerchart": {
+      "source": "spences10/svelte-skills-kit",
+      "sourceType": "github",
+      "skillPath": "plugins/svelte-skills/skills/svelte-layerchart/SKILL.md",
+      "computedHash": "c01a4d1af72a9eb91d35014197a0dfa4a89048ff43e5a568b3cab119870a72ae"
     }
   }
 }

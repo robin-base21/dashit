@@ -1,68 +1,43 @@
 <script lang="ts">
-	import type { CreateDatasourceInput, DatasourceRow } from 'shared';
+	import type { DatasourceRow } from 'shared';
 	import { toast } from 'svelte-sonner';
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
 	import * as Card from '$lib/components/ui/card';
-	import * as Dialog from '$lib/components/ui/dialog';
-	import * as Select from '$lib/components/ui/select';
-	import { Input } from '$lib/components/ui/input';
-	import { Label } from '$lib/components/ui/label';
-	import { Textarea } from '$lib/components/ui/textarea';
 	import { getDb } from '$lib/db/context';
 	import { liveQuery } from '$lib/db/client.svelte';
 	import { getDataflow } from '$lib/dataflow/engine.svelte';
+	import { getRuntime } from '$lib/dataflow/runtime-context';
 	import { KIND_META } from '$lib/elements/kinds';
+	import DatasourceDialog from '$lib/components/datasources/datasource-dialog.svelte';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import Trash2Icon from '@lucide/svelte/icons/trash-2';
+	import PencilIcon from '@lucide/svelte/icons/pencil';
+	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
 
 	const db = getDb();
 	const dataflow = getDataflow();
+	const runtime = getRuntime();
 
 	const datasources = liveQuery(db, (d) => d.call('listDatasources'), ['datasources']);
 	const elements = liveQuery(db, (d) => d.call('listElements'), ['elements']);
+	const cache = liveQuery(db, (d) => d.call('listDatasourceCache'), ['datasource_cache']);
+
 	const editables = $derived((elements.value ?? []).filter((e) => KIND_META[e.kind].category === 'editable'));
 	const elementTitle = $derived(new Map((elements.value ?? []).map((e) => [e.id, e.title || KIND_META[e.kind].label])));
+	const cacheById = $derived(new Map((cache.value ?? []).map((c) => [c.datasource_id, c])));
 
-	let open = $state(false);
-	let kind = $state<'static' | 'internal'>('static');
-	let name = $state('');
-	let staticJson = $state('[\n  { "label": "a", "value": 1 },\n  { "label": "b", "value": 2 }\n]');
-	let sourceElement = $state('');
-	let jsonError = $state<string | null>(null);
+	let dialogOpen = $state(false);
+	let editing = $state<DatasourceRow | null>(null);
 
-	function reset() {
-		kind = 'static';
-		name = '';
-		sourceElement = '';
-		jsonError = null;
+	function create() {
+		editing = null;
+		dialogOpen = true;
 	}
 
-	async function create() {
-		let input: CreateDatasourceInput;
-		const n = name.trim();
-		if (kind === 'static') {
-			let value: unknown;
-			try {
-				value = JSON.parse(staticJson);
-				jsonError = null;
-			} catch (e) {
-				jsonError = e instanceof Error ? e.message : String(e);
-				return;
-			}
-			input = { kind: 'static', name: n || 'Static values', value };
-		} else {
-			if (!sourceElement) return;
-			input = { kind: 'internal', name: n || `${elementTitle.get(sourceElement)} data`, source_element_id: sourceElement };
-		}
-		try {
-			await db.call('createDatasource', input);
-			open = false;
-			reset();
-			toast.success('Datasource created');
-		} catch (e) {
-			toast.error('Could not create datasource', { description: e instanceof Error ? e.message : String(e) });
-		}
+	function edit(ds: DatasourceRow) {
+		editing = ds;
+		dialogOpen = true;
 	}
 
 	async function remove(ds: DatasourceRow) {
@@ -73,6 +48,8 @@
 	function preview(ds: DatasourceRow): string {
 		const s = dataflow.get(`datasource:${ds.id}`);
 		if (s.status === 'error') return `Error: ${s.error}`;
+		if (s.status === 'inactive') return 'Inactive — nothing on the dashboard reads this source yet.';
+		if (s.status === 'running') return 'Fetching…';
 		if (s.status !== 'ok') return s.status;
 		const text = JSON.stringify(s.value, null, 1) ?? 'null';
 		return text.length > 400 ? text.slice(0, 400) + '…' : text;
@@ -82,6 +59,14 @@
 		const v = dataflow.get(`datasource:${ds.id}`).value;
 		return Array.isArray(v) ? v.length : null;
 	}
+
+	function ago(ts: number | null | undefined): string {
+		if (!ts) return 'never';
+		const s = Math.round((Date.now() - ts) / 1000);
+		if (s < 60) return `${s}s ago`;
+		if (s < 3600) return `${Math.round(s / 60)}m ago`;
+		return new Date(ts).toLocaleTimeString();
+	}
 </script>
 
 <svelte:head><title>Datasources · DashIt</title></svelte:head>
@@ -90,9 +75,9 @@
 	<div class="mb-4 flex items-center justify-between gap-3">
 		<div>
 			<h1 class="text-lg font-semibold">Datasources</h1>
-			<p class="text-sm text-muted-foreground">Static values and editable elements exposed as data. External APIs arrive in a later phase.</p>
+			<p class="text-sm text-muted-foreground">Static values, editable elements, and external APIs polled from this browser.</p>
 		</div>
-		<Button onclick={() => (open = true)}>
+		<Button onclick={create}>
 			<PlusIcon class="size-4" />
 			New datasource
 		</Button>
@@ -100,12 +85,14 @@
 
 	<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
 		{#each datasources.value ?? [] as ds (ds.id)}
+			{@const c = cacheById.get(ds.id)}
+			{@const active = dataflow.activeDatasourceIds.has(ds.id)}
 			<Card.Root data-datasource-id={ds.id}>
 				<Card.Header>
 					<Card.Title class="flex items-center gap-2 text-base">
 						<span class="truncate">{ds.name}</span>
 						<Badge variant="secondary">{ds.kind}</Badge>
-						{#if dataflow.activeDatasourceIds.has(ds.id)}
+						{#if active}
 							<Badge variant="outline">active</Badge>
 						{/if}
 					</Card.Title>
@@ -115,74 +102,44 @@
 						{:else if ds.kind === 'static'}
 							Constant value
 						{:else}
-							{ds.url}
+							<span class="break-all">{ds.method} {ds.url}</span> · every {Math.round((ds.poll_interval_ms ?? 0) / 1000)}s
+							· fetched {ago(c?.fetched_at)}
 						{/if}
 						{#if recordCount(ds) !== null}
 							· {recordCount(ds)} records
 						{/if}
 					</Card.Description>
-					<Card.Action>
+					<Card.Action class="flex items-center gap-0.5">
+						{#if ds.kind === 'external'}
+							<Button
+								size="icon-sm"
+								variant="ghost"
+								aria-label="Fetch now"
+								disabled={runtime.states.get(ds.id)?.busy}
+								onclick={() => runtime.fetchNow(ds.id)}
+							>
+								<RefreshCwIcon class={['size-4', runtime.states.get(ds.id)?.busy && 'animate-spin']} />
+							</Button>
+						{/if}
+						<Button size="icon-sm" variant="ghost" aria-label="Edit datasource" onclick={() => edit(ds)}>
+							<PencilIcon class="size-4" />
+						</Button>
 						<Button size="icon-sm" variant="ghost" aria-label="Delete datasource" onclick={() => remove(ds)}>
 							<Trash2Icon class="size-4" />
 						</Button>
 					</Card.Action>
 				</Card.Header>
-				<Card.Content>
-					<pre class="max-h-40 overflow-auto rounded bg-muted p-2 text-xs">{preview(ds)}</pre>
+				<Card.Content class="space-y-2">
+					{#if c?.error}
+						<p class="text-xs text-destructive" data-testid="fetch-error">Last fetch failed: {c.error}</p>
+					{/if}
+					<pre class="max-h-40 overflow-auto rounded bg-muted p-2 text-xs" data-testid="preview">{preview(ds)}</pre>
 				</Card.Content>
 			</Card.Root>
 		{:else}
-			<p class="col-span-full rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-				No datasources yet.
-			</p>
+			<p class="col-span-full rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">No datasources yet.</p>
 		{/each}
 	</div>
 </div>
 
-<Dialog.Root bind:open onOpenChange={(o) => !o && reset()}>
-	<Dialog.Content class="sm:max-w-lg">
-		<Dialog.Header>
-			<Dialog.Title>New datasource</Dialog.Title>
-		</Dialog.Header>
-		<div class="grid gap-4">
-			<div class="grid gap-2">
-				<Label>Type</Label>
-				<Select.Root type="single" bind:value={kind}>
-					<Select.Trigger class="w-full" aria-label="Type">{kind === 'static' ? 'Static values' : 'Element data (internal)'}</Select.Trigger>
-					<Select.Content>
-						<Select.Item value="static" label="Static values">Static values</Select.Item>
-						<Select.Item value="internal" label="Element data (internal)">Element data (internal)</Select.Item>
-					</Select.Content>
-				</Select.Root>
-			</div>
-			<div class="grid gap-2">
-				<Label for="ds-name">Name</Label>
-				<Input id="ds-name" bind:value={name} placeholder={kind === 'static' ? 'Static values' : 'Element data'} />
-			</div>
-			{#if kind === 'static'}
-				<div class="grid gap-2">
-					<Label for="ds-json">JSON value</Label>
-					<Textarea id="ds-json" bind:value={staticJson} rows={8} class="font-mono text-xs" aria-invalid={jsonError !== null} />
-					{#if jsonError}<p class="text-xs text-destructive">{jsonError}</p>{/if}
-				</div>
-			{:else}
-				<div class="grid gap-2">
-					<Label>Element</Label>
-					<Select.Root type="single" bind:value={sourceElement}>
-						<Select.Trigger class="w-full" aria-label="Element">{elementTitle.get(sourceElement) ?? 'Pick an editable element'}</Select.Trigger>
-						<Select.Content>
-							{#each editables as el (el.id)}
-								<Select.Item value={el.id} label={el.title || KIND_META[el.kind].label}>{el.title || KIND_META[el.kind].label} <span class="text-muted-foreground">· {KIND_META[el.kind].label}</span></Select.Item>
-							{/each}
-						</Select.Content>
-					</Select.Root>
-					{#if editables.length === 0}<p class="text-xs text-muted-foreground">Create a task, checklist or table first.</p>{/if}
-				</div>
-			{/if}
-		</div>
-		<Dialog.Footer>
-			<Button variant="outline" onclick={() => (open = false)}>Cancel</Button>
-			<Button onclick={create} disabled={kind === 'internal' && !sourceElement}>Create</Button>
-		</Dialog.Footer>
-	</Dialog.Content>
-</Dialog.Root>
+<DatasourceDialog bind:open={dialogOpen} {editing} {editables} />

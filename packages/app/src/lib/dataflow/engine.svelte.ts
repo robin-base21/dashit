@@ -26,8 +26,8 @@ export interface NodeState {
 
 const EMPTY: NodeState = { status: "idle", value: undefined, error: null, updatedAt: 0, version: 0 };
 
-// Tables whose changes require re-reading internal datasources.
-const EDITABLE_TABLES = ["task_items", "table_columns", "table_rows", "table_cells", "elements"];
+// Tables whose changes require re-reading datasource values (editables and the external cache).
+const DATA_TABLES = ["task_items", "table_columns", "table_rows", "table_cells", "elements", "datasource_cache"];
 const GRAPH_TABLES = ["datasources", "edges", "transformers", "transformer_versions", "placements", "elements"];
 
 /**
@@ -43,9 +43,12 @@ export class Dataflow {
 
   #db: Db;
   #sandbox = new Sandbox();
+  /** Receives the external datasources and the active set after every graph load. */
+  externalRuntime: { sync(datasources: DatasourceRow[], activeIds: Set<string>): void } | null = null;
+  #cache = new Map<string, { value: unknown; fetched_at: number | null; error: string | null }>();
   #graph: Graph = buildGraph([]);
   #datasources = new Map<string, DatasourceRow>();
-  #codeByTransformer = new Map<string, { code: string; timeoutMs: number }>();
+  #codeByTransformer = new Map<string, { code: string; timeoutMs: number; versionId: string }>();
   #lastInputs = new Map<NodeKey, string>();
   #generation = 0;
   #running = false;
@@ -58,7 +61,7 @@ export class Dataflow {
 
   start(): void {
     this.#stop.push(this.#db.onChange(GRAPH_TABLES, () => this.invalidate(true)));
-    this.#stop.push(this.#db.onChange(EDITABLE_TABLES, () => this.invalidate(false)));
+    this.#stop.push(this.#db.onChange(DATA_TABLES, () => this.invalidate(false)));
     void this.invalidate(true);
   }
 
@@ -115,6 +118,7 @@ export class Dataflow {
     this.#datasources = new Map(datasources.map((d) => [d.id, d]));
     this.activeDatasourceIds = activeDatasources(this.#graph, visible);
     this.graphVersion++;
+    this.externalRuntime?.sync(datasources, this.activeDatasourceIds);
 
     this.#codeByTransformer.clear();
     await Promise.all(
@@ -122,7 +126,7 @@ export class Dataflow {
         if (!t.current_version_id) return;
         const versions = await this.#db.call("listTransformerVersions", t.id);
         const v = versions.find((x) => x.id === t.current_version_id);
-        if (v) this.#codeByTransformer.set(t.id, { code: v.code, timeoutMs: t.timeout_ms });
+        if (v) this.#codeByTransformer.set(t.id, { code: v.code, timeoutMs: t.timeout_ms, versionId: v.id });
       }),
     );
 
@@ -135,6 +139,15 @@ export class Dataflow {
   }
 
   async #evaluate(gen: number): Promise<void> {
+    if ([...this.#datasources.values()].some((d) => d.kind === "external")) {
+      const rows = await this.#db.call("listDatasourceCache");
+      this.#cache = new Map(
+        rows.map((r) => [
+          r.datasource_id,
+          { value: r.value_json === null ? undefined : JSON.parse(r.value_json), fetched_at: r.fetched_at, error: r.error },
+        ]),
+      );
+    }
     // Datasources not in any edge still get evaluated so the datasources page can preview them.
     const order = new Set<NodeKey>(topologicalOrder(this.#graph));
     for (const id of this.#datasources.keys()) order.add(nodeKey("datasource", id));
@@ -182,10 +195,23 @@ export class Dataflow {
         case "internal":
           value = ds.source_element_id ? await this.#db.call("readElementData", ds.source_element_id) : [];
           break;
-        case "external":
-          // Phase 1.5: DatasourceRuntime feeds external values; until then they are inactive.
-          this.#set(key, { status: "inactive", value: undefined, error: null }, false);
+        case "external": {
+          const cached = this.#cache.get(id);
+          const active = this.activeDatasourceIds.has(id);
+          if (cached?.error && cached.value === undefined) {
+            this.#set(key, { status: "error", error: cached.error }, true);
+            return;
+          }
+          if (!cached || cached.value === undefined) {
+            this.#set(key, { status: active ? "running" : "inactive", value: undefined, error: null }, false);
+            return;
+          }
+          // Stale-but-present values render; the error (if any) is surfaced alongside.
+          value = cached.value;
+          const changedExt = JSON.stringify(value) !== JSON.stringify(this.get(key).value);
+          this.#set(key, { status: "ok", value, error: cached.error ?? null }, changedExt);
           return;
+        }
       }
       const changed = JSON.stringify(value) !== JSON.stringify(this.get(key).value);
       this.#set(key, { status: "ok", value, error: null }, changed);
@@ -195,7 +221,9 @@ export class Dataflow {
   }
 
   async #evalTransformer(id: string, key: NodeKey): Promise<void> {
-    const sig = this.#inputSignature(key);
+    // Inputs plus the code version: saving or restoring a version must re-run the node.
+    const code = this.#codeByTransformer.get(id);
+    const sig = `${this.#inputSignature(key)}#${code?.versionId ?? "none"}#${code?.timeoutMs ?? 0}`;
     if (sig === this.#lastInputs.get(key) && this.get(key).status !== "idle") return;
     this.#lastInputs.set(key, sig);
 
@@ -205,7 +233,6 @@ export class Dataflow {
       this.#set(key, { status: "error", error: `upstream error in ${upstreamError}` }, true);
       return;
     }
-    const code = this.#codeByTransformer.get(id);
     if (!code) {
       this.#set(key, { status: "error", error: "transformer has no code" }, true);
       return;
