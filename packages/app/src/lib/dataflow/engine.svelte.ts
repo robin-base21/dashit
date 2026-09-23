@@ -12,19 +12,9 @@ import { createContext } from "svelte";
 import { SvelteMap } from "svelte/reactivity";
 import type { Db } from "$lib/db/client.svelte";
 import { Sandbox, type JsonValue } from "$lib/sandbox/sandbox";
+import { EMPTY, presentState, type NodeState } from "./node-state.ts";
 
-export type NodeStatus = "idle" | "running" | "ok" | "error" | "inactive" | "unbound";
-
-export interface NodeState {
-  status: NodeStatus;
-  value: unknown;
-  error: string | null;
-  updatedAt: number;
-  /** Bumps whenever `value` changes; downstream nodes re-run when an input version changes. */
-  version: number;
-}
-
-const EMPTY: NodeState = { status: "idle", value: undefined, error: null, updatedAt: 0, version: 0 };
+export type { NodeState, NodeStatus } from "./node-state.ts";
 
 // Tables whose changes require re-reading datasource values (editables and the external cache).
 const DATA_TABLES = ["task_items", "table_columns", "table_rows", "table_cells", "elements", "datasource_cache", "datasource_samples"];
@@ -83,11 +73,14 @@ export class Dataflow {
     return this.#graph.producersOf.get(nodeKey("element", elementId)) ?? [];
   }
 
-  /** The dataset an observable element should render: its first producer's value. */
+  /**
+   * The dataset an observable element should render: its first producer's value, presented so a
+   * re-running transformer does not make every observable rewind to empty (see `presentState`).
+   */
   datasetOf(elementId: string): { state: NodeState; producer: NodeKey | null } {
     const [producer] = this.producersOf(elementId);
     if (!producer) return { state: { ...EMPTY, status: "unbound" }, producer: null };
-    return { state: this.get(producer), producer };
+    return { state: presentState(this.get(producer)), producer };
   }
 
   /** Re-run the graph. `graphChanged` reloads nodes/edges; otherwise only data is re-read. */

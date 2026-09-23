@@ -756,6 +756,12 @@ No open questions remain. Every "recommend and justify" point and every risk que
   `internal` datasource.
 - `element-body.svelte` no longer ends in a bare `{:else}` that rendered unknown kinds as a chart;
   every kind is listed and the fallback says so.
+- `datasetOf` presents a re-running producer that still holds a value as `ok`, flagged `stale`
+  (`packages/app/src/lib/dataflow/node-state.ts`). A transformer reports `running` for the length of
+  its run, and every observable gates on `ok`, so each re-run made a progress bar animate back to
+  zero and a chart re-animate. The node's own status is unchanged — the transformer pages still show
+  the run in flight — and §5.2's error propagation is untouched, since an error is never masked by a
+  stale value.
 
 ### Revision 5 (tracked datasources)
 
