@@ -20,6 +20,8 @@
 	import { goto } from '$app/navigation';
 	import { RelayError } from '$lib/auth/api';
 	import { getSession } from '$lib/auth/session.svelte';
+	import { getSync } from '$lib/sync/engine.svelte';
+	import RefreshIcon from '@lucide/svelte/icons/refresh-cw';
 	import { enrolAnotherPasskey } from '$lib/auth/flows';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
@@ -28,6 +30,22 @@
 	const db = getDb();
 	const theme = getTheme();
 	const session = getSession();
+	const sync = getSync();
+
+	const SYNC_LABEL: Record<string, string> = {
+		off: 'Not syncing',
+		idle: 'Up to date',
+		syncing: 'Syncing…',
+		error: 'Could not sync',
+		update_required: 'Update required'
+	};
+
+	function agoLabel(at: number): string {
+		const secs = Math.max(0, Math.round((Date.now() - at) / 1000));
+		if (secs < 60) return 'just now';
+		if (secs < 3600) return `${Math.round(secs / 60)} min ago`;
+		return new Date(at).toLocaleString();
+	}
 
 	let renaming = $state<string | null>(null);
 	let draftLabel = $state('');
@@ -366,6 +384,20 @@
 					</div>
 				{/if}
 
+				<div class="flex flex-col gap-1 rounded-md border p-3" data-testid="sync-status">
+					<div class="flex items-center justify-between gap-2">
+						<span class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Sync</span>
+						<Button size="icon-sm" variant="ghost" onclick={() => sync.syncNow()} aria-label="Sync now">
+							<RefreshIcon class="size-3.5" />
+						</Button>
+					</div>
+					<p class="text-sm" data-testid="sync-state">{SYNC_LABEL[sync.status] ?? sync.status}</p>
+					{#if sync.lastError}
+						<p class="text-xs text-destructive">{sync.lastError}</p>
+					{:else if sync.lastSyncAt}
+						<p class="text-xs text-muted-foreground">Last synced {agoLabel(sync.lastSyncAt)}</p>
+					{/if}
+				</div>
 				<div class="flex gap-2">
 					<Button size="sm" variant="outline" onclick={() => session.signOut()}>Sign out</Button>
 					<Button size="sm" variant="destructive" onclick={deleteAccount}>Delete account</Button>

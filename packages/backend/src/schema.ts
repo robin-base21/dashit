@@ -119,5 +119,43 @@ const v1: Migration = {
   ],
 };
 
-export const MIGRATIONS: readonly Migration[] = [v1];
+/**
+ * Sync storage (§3.4, §3.5). The relay holds envelopes as opaque blobs: it reads only the header
+ * it was handed and never the payload, which is plaintext CBOR in Phase 2 and ciphertext in
+ * Phase 3 without this schema changing.
+ */
+const v2: Migration = {
+  version: 2,
+  statements: [
+    `CREATE TABLE IF NOT EXISTS envelopes (
+      account_id     TEXT    NOT NULL REFERENCES accounts(id),
+      -- Strictly increasing per account; what a client pulls "since".
+      seq            INTEGER NOT NULL,
+      site_id        TEXT    NOT NULL,
+      schema_version INTEGER NOT NULL,
+      -- The producer's db_version range, so one site's envelopes apply in order.
+      from_version   INTEGER NOT NULL,
+      to_version     INTEGER NOT NULL,
+      payload        BLOB    NOT NULL,
+      created_at     INTEGER NOT NULL,
+      PRIMARY KEY (account_id, seq)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_envelopes_pull ON envelopes(account_id, seq, site_id)`,
+
+    `CREATE TABLE IF NOT EXISTS snapshots (
+      account_id     TEXT    PRIMARY KEY NOT NULL REFERENCES accounts(id),
+      -- The relay seq this snapshot already contains; pulling resumes from here.
+      covers_seq     INTEGER NOT NULL,
+      schema_version INTEGER NOT NULL,
+      payload        BLOB    NOT NULL,
+      created_at     INTEGER NOT NULL
+    )`,
+
+    // The floor a client may pull from. Raised by pruning, and what turns a too-old `since` into
+    // a 410 rather than a silently incomplete reply.
+    `ALTER TABLE accounts ADD COLUMN oldest_retained_seq INTEGER NOT NULL DEFAULT 0`,
+  ],
+};
+
+export const MIGRATIONS: readonly Migration[] = [v1, v2];
 export const RELAY_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;

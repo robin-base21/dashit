@@ -3,6 +3,10 @@
 	import { Toaster } from '$lib/components/ui/sonner';
 	import AppSidebar from '$lib/components/app-sidebar.svelte';
 	import ElementsPanel from '$lib/components/elements/elements-panel.svelte';
+	import SyncGate from '$lib/components/sync-gate.svelte';
+	import { RELAY_URL } from '$lib/auth/api';
+	import { getSession } from '$lib/auth/session.svelte';
+	import { SyncEngine, setSync } from '$lib/sync/engine.svelte';
 	import { onDestroy } from 'svelte';
 	import { Db } from '$lib/db/client.svelte';
 	import { setDb } from '$lib/db/context';
@@ -31,6 +35,18 @@
 
 	const dataflow = new Dataflow(db);
 	setDataflow(dataflow);
+
+	// Created here rather than in SyncGate: context only reaches a component's own children, and
+	// the gate is a sibling of the page, so a context it set would never be visible to Settings.
+	const session = getSession();
+	const sync = new SyncEngine({
+		db,
+		client: session.client,
+		siteId: () => db.info?.siteId ?? '',
+		relayUrl: RELAY_URL,
+		token: () => session.accessToken()
+	});
+	setSync(sync);
 	const runtime = new DatasourceRuntime(db);
 	setRuntime(runtime);
 	dataflow.externalRuntime = runtime;
@@ -44,6 +60,7 @@
 		return true;
 	});
 	onDestroy(() => {
+		sync.stop();
 		dataflow.stop();
 		runtime.stop();
 	});
@@ -66,6 +83,8 @@
 		</Sidebar.Inset>
 		<ElementsPanel />
 	</Sidebar.Provider>
+	<!-- Inside the shell because it needs the database; does nothing at all when signed out. -->
+	<SyncGate />
 	{/if}
 {:catch error}
 	<div class="m-8 rounded-md border border-destructive p-4 text-sm">

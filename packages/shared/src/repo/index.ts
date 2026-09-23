@@ -6,6 +6,7 @@ import * as elementData from "./element-data.ts";
 import * as elements from "./elements.ts";
 import * as exp from "./export.ts";
 import * as localMeta from "./local-meta.ts";
+import * as sync from "./sync.ts";
 import * as tables from "./tables.ts";
 import * as taskItems from "./task-items.ts";
 import * as transformers from "./transformers.ts";
@@ -24,6 +25,7 @@ export const commands = {
   ...tables,
   ...elementData,
   ...localMeta,
+  ...sync,
   exportData: exp.exportData,
   importData: exp.importData,
 };

@@ -18,7 +18,11 @@ export default defineConfig({
 					url: baseURL,
 					reuseExistingServer: true,
 					timeout: 120_000,
-					env: { VITE_RELAY_URL: relayURL }
+					env: {
+						VITE_RELAY_URL: relayURL,
+						// Stage 2 sends plaintext; the flag is what keeps that out of a production build.
+						VITE_DASHIT_PLAINTEXT_SYNC: '1'
+					}
 				},
 				{
 					// Playwright runs under Node, so the relay cannot be imported in-process — it

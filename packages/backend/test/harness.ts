@@ -4,6 +4,7 @@ import { loadConfig, type Config } from "../src/config.ts";
 import { migrate } from "../src/db.ts";
 import { ConsoleEmailSender, type EmailMessage } from "../src/email.ts";
 import { RateLimiter } from "../src/middleware/rate-limit.ts";
+import { Nudge } from "../src/nudge.ts";
 
 /** Captures instead of printing, so tests can read the code without watching stdout. */
 export class TestEmailSender extends ConsoleEmailSender {
@@ -22,6 +23,7 @@ export interface Harness {
   config: Config;
   email: TestEmailSender;
   limiter: RateLimiter;
+  nudge: Nudge;
   request(path: string, init?: RequestInit & { token?: string }): Promise<Response>;
   json<T>(path: string, init?: RequestInit & { token?: string }): Promise<{ status: number; body: T }>;
 }
@@ -33,7 +35,8 @@ export function harness(overrides: Partial<Config> = {}): Harness {
   const config = loadConfig({ rpId: "localhost", origins: ["http://localhost:5173"], ...overrides });
   const email = new TestEmailSender();
   const limiter = new RateLimiter();
-  const app = createApp({ db, config, email, limiter });
+  const nudge = new Nudge();
+  const app = createApp({ db, config, email, limiter, nudge });
 
   const request = async (path: string, init: RequestInit & { token?: string } = {}): Promise<Response> => {
     const headers = new Headers(init.headers);
@@ -47,6 +50,7 @@ export function harness(overrides: Partial<Config> = {}): Harness {
     config,
     email,
     limiter,
+    nudge,
     request,
     async json<T>(path: string, init: RequestInit & { token?: string } = {}) {
       const res = await request(path, init);

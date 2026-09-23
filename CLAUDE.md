@@ -42,6 +42,12 @@ its own `node_modules`).
 - Every `openStore()` sets `PRAGMA temp_store = MEMORY`; without it statement journals go through the VFS and writes are ~50x slower. WAL is unavailable on the OPFS VFS. Database names are `[A-Za-z0-9_.-]` only.
 - The relay must never receive plaintext content, datasource payloads, API keys, or the recovery key.
 - Passkey PRF output is key material and never leaves the device; the relay stores only `prf_capable`.
+- Sync: the relay stores envelopes as opaque blobs (base64 of `cbor(changeset)`) and never parses a
+  payload. The push watermark is the max `db_version` of the rows pushed, never `dbVersion()`, which
+  advances when other sites' changes are applied. `VITE_DASHIT_PLAINTEXT_SYNC=1` is required for the
+  engine to run at all and disappears in Phase 3.
+- `BunSqliteStore` has no cr-sqlite, so `changesSince`/`applyChanges` throw: CRDT convergence can only
+  be tested in Playwright, not `bun test`.
   There is no DEK until Phase 3, so `wrapped_dek` is null everywhere.
 - Signing in is additive: anonymous mode is permanent, so no route guards and no redirect to login.
 - WebAuthn e2e needs a CDP virtual authenticator, which is Chromium-only — those tests skip elsewhere.

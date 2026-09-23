@@ -47,6 +47,11 @@ export class Session {
 
   #refresh: string | null = null;
 
+  /** The bearer token, for the sync socket: a browser cannot set headers on a WebSocket. */
+  accessToken(): string | null {
+    return this.#access;
+  }
+
   get signedIn(): boolean {
     return this.account !== null;
   }

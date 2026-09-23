@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { Config } from "./config.ts";
 import type { EmailSender } from "./email.ts";
 import type { RateLimiter } from "./middleware/rate-limit.ts";
+import type { Nudge } from "./nudge.ts";
 import type { SessionRow } from "./sessions.ts";
 
 export interface AccountRow {
@@ -17,6 +18,7 @@ export interface Deps {
   config: Config;
   email: EmailSender;
   limiter: RateLimiter;
+  nudge: Nudge;
 }
 
 export interface AppEnv {

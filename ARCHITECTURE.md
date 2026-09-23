@@ -1,6 +1,6 @@
 # DashIt — Local-First Architecture & Phased Roadmap
 
-**Revision 9.** Revision 1 was reviewed and found to have two security-relevant flaws (recovery key sent to the server in plaintext; a bypassable transformer sandbox) and several "additive migration" claims that were not additive (a non-CRR-compatible schema, a WASM-binary swap disguised as a feature flag, no schema-evolution story, no service worker for the offline shell). Revision 2 fixed those. Revision 3 resolves every remaining open question (§11 is now a decision log), merges `checklist_items` into `task_items`, and tightens the sandbox CSP. Revision 4 folds the `checklist` element kind into `task`. Revision 5 adds tracked datasources. Revision 6 adds the progress observable and per-kind data-format docs. Revision 7 records the relay and passkey accounts as built. Revision 8 settles second-device onboarding. Revision 9 adds the key/value list observable. Changes are summarized in §12.
+**Revision 10.** Revision 1 was reviewed and found to have two security-relevant flaws (recovery key sent to the server in plaintext; a bypassable transformer sandbox) and several "additive migration" claims that were not additive (a non-CRR-compatible schema, a WASM-binary swap disguised as a feature flag, no schema-evolution story, no service worker for the offline shell). Revision 2 fixed those. Revision 3 resolves every remaining open question (§11 is now a decision log), merges `checklist_items` into `task_items`, and tightens the sandbox CSP. Revision 4 folds the `checklist` element kind into `task`. Revision 5 adds tracked datasources. Revision 6 adds the progress observable and per-kind data-format docs. Revision 7 records the relay and passkey accounts as built. Revision 8 settles second-device onboarding. Revision 9 adds the key/value list observable. Revision 10 records sync as built, completing Phase 2. Changes are summarized in §12.
 
 ## Context
 
@@ -405,6 +405,26 @@ Field-level ciphertext (`datasources.secrets_ciphertext`, §4.6) travels inside 
 - **Live nudge**: `GET /sync/subscribe` WebSocket; the relay sends `{ seq }` when a new envelope lands for the account. Payload-free. Clients pull on nudge; fall back to a 60 s poll when the socket is down.
 - **Gap detection**: the pull response includes `oldest_retained_seq`. If `last_pulled_seq < oldest_retained_seq` (device offline past the retention window), the relay returns `410 Gone` and the client re-bootstraps from the snapshot (§3.5). Re-applying a snapshot over existing local state is safe by idempotence.
 
+### 3.4a As built (Phase 2 stage 2)
+
+- **Wire format.** The relay stores an opaque blob beside the header it was handed:
+  `POST /sync/push { site_id, schema_version, from, to, payload }` where `payload` is base64 of
+  `cbor(changeset)`. The relay has no CBOR dependency and never parses a payload, so Phase 3
+  changes exactly one thing — the payload becomes ciphertext. CBOR rather than JSON because a
+  changeset row carries `pk` and `site_id` as raw bytes.
+- **The push watermark comes from the rows, not from `dbVersion()`.** `crsql_db_version()` advances
+  when *other* sites' changes are applied, so using it would skip local edits carrying a lower
+  `db_version` than an applied remote one — a silent hole in what ever reaches the relay.
+  `pendingChanges()` takes the maximum `db_version` of the rows it returns.
+- **Own envelopes are filtered server-side** on pull, using the `site_id` the caller passes.
+- **The nudge is payload-free** and is never announced back to its author; the poll stays running so
+  a dropped socket degrades rather than stops. Its access token travels in the WebSocket
+  subprotocol, since a browser cannot set headers on a socket (§4.7).
+- **Adoption.** Claiming the database is all a merge needs: the local rows are already pending
+  changes, so the first push carries them up and cr-sqlite unions by primary key. Discarding
+  tombstones rather than deletes, or the rows would simply return on the next pull. A database that
+  already belongs to a *different* account is refused rather than mixed.
+
 ### 3.5 Snapshots and compaction
 
 - A **snapshot** is `exportAll()` encrypted as a `SnapshotEnvelope` (same envelope shape, `from = 0`) tagged with `covers_seq` = the relay `seq` the producing device had fully pulled and applied before exporting.
@@ -764,8 +784,19 @@ Split into two stages, auth first, so each is shippable and verifiable on its ow
   passkey, sign out, and sign back in with no email typed; the last passkey cannot be removed; the
   dashboard works with no account and no relay.
 
-**Stage 2 — sync.**
-- `/sync/*` and the client sync engine, per the rest of this section.
+**Stage 2 — sync — done 2026-09-23.**
+- `/sync/*` on the relay (push, pull, snapshot, and the `subscribe` nudge socket) with §9's rate
+  limits, including the byte quota; envelopes and snapshots stored as opaque blobs.
+- Client engine: debounced push, pull loop, nudge with poll fallback, `410` → snapshot
+  re-bootstrap, envelope-level schema gating, and the `sync_state` watermarks (§3.4a).
+- Anonymous-data adoption (§4.8) minus its encryption half, which needs a DEK.
+- **Acceptance met** (Chromium, two browser contexts, the second signing in with the first's
+  credential injected via CDP — a synced passkey): both devices edit the same task list offline and
+  converge on reconnect with nothing lost; a live edit crosses without waiting for the poll; local
+  anonymous work is offered for merge on sign-in and reaches the other device.
+- **Verification limit worth knowing**: `BunSqliteStore` has no cr-sqlite, so `changesSince` and
+  `applyChanges` throw outside a browser. Everything around them — the relay, the watermarks, the
+  chunking — is unit-tested; actual CRDT convergence is only provable in Playwright.
 - Passkey registration/login with discoverable credentials (PRF captured but not yet used), email codes, sessions/refresh.
 - Sync engine end to end with a `DASHIT_PLAINTEXT_SYNC=1` dev flag (envelopes unencrypted) so CRDT behaviour, snapshots, pruning, `410` re-bootstrap, and schema-version gating are proven without crypto in the way. The flag cannot be enabled in production builds.
 - Anonymous-data adoption flow (§4.8).
@@ -815,6 +846,15 @@ No open questions remain. Every "recommend and justify" point and every risk que
 ---
 
 ## 12. Change History
+
+### Revision 10 (sync)
+
+- §3.4a records the sync half as built: the CBOR-payload/JSON-header split that keeps the relay
+  free of the payload format, the watermark rule, server-side own-site filtering, and the
+  payload-free nudge.
+- Phase 2 is complete. Its acceptance criteria were met in a browser, because they cannot be met
+  anywhere else — the headless test double has no cr-sqlite.
+- Adoption is built except for encrypting secrets in place, which waits for the DEK.
 
 ### Revision 9 (key/value list observable)
 

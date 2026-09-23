@@ -31,8 +31,11 @@ export class RateLimiter {
     this.#scale = Math.max(1, scale);
   }
 
-  /** Consumes one token. False means the caller is over its limit. */
-  take(key: string, limits: Limit, now = Date.now()): boolean {
+  /**
+   * Consumes `cost` tokens. False means the caller is over its limit. `cost` is how a byte quota
+   * shares one implementation with a request count: the tokens are simply bytes.
+   */
+  take(key: string, limits: Limit, now = Date.now(), cost = 1): boolean {
     const limit = limits.limit * this.#scale;
     const { windowMs } = limits;
     if (this.isLocked(key, now)) return false;
@@ -41,11 +44,11 @@ export class RateLimiter {
     // at once on a window boundary.
     b.tokens = Math.min(limit, b.tokens + ((now - b.refilledAt) / windowMs) * limit);
     b.refilledAt = now;
-    if (b.tokens < 1) {
+    if (b.tokens < cost) {
       this.#buckets.set(key, b);
       return false;
     }
-    b.tokens -= 1;
+    b.tokens -= cost;
     this.#buckets.set(key, b);
     return true;
   }
@@ -91,6 +94,15 @@ export const LIMITS = {
   codeIssuePerEmail: { limit: 3, windowMs: 3_600_000 },
   codeIssuePerIp: { limit: 20, windowMs: 3_600_000 },
   assertion: { limit: 30, windowMs: 60_000 },
+} as const satisfies Record<string, Limit>;
+
+/** §9's per-account sync limits. Kept beside the auth ones so the numbers live in one place. */
+export const LIMITS_SYNC = {
+  push: { limit: 60, windowMs: 60_000 },
+  /** Tokens are bytes here: 8 MiB an hour. */
+  pushBytes: { limit: 8 * 1024 * 1024, windowMs: 3_600_000 },
+  snapshot: { limit: 4, windowMs: 24 * 3_600_000 },
+  read: { limit: 120, windowMs: 60_000 },
 } as const satisfies Record<string, Limit>;
 
 /** Failed code/verifier checks before an address is locked out, and for how long. */
