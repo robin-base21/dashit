@@ -5,6 +5,7 @@
 	import AggregationView from './aggregation-view.svelte';
 	import ChartView from './chart-view.svelte';
 	import ProgressView from './progress-view.svelte';
+	import KeyValueView from './keyvalue-view.svelte';
 
 	let { element }: { element: ElementRow } = $props();
 </script>
@@ -17,6 +18,8 @@
 	<AggregationView {element} />
 {:else if element.kind === 'progress'}
 	<ProgressView {element} />
+{:else if element.kind === 'keyvalue'}
+	<KeyValueView {element} />
 {:else if element.kind === 'chart'}
 	<ChartView {element} />
 {:else}

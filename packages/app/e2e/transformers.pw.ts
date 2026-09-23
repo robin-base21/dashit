@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { pickOption } from './helpers.ts';
 
 async function createAndPlace(page: Page, kind: string, title: string, at: { x: number; y: number }) {
 	if (!(await page.locator('aside[aria-label="Elements"]').isVisible())) {
@@ -37,8 +38,7 @@ test('transformer reshapes a datasource, feeds a chart, and keeps versions', asy
 	await expect(page).toHaveURL(/\/transformers\/[0-9a-f-]+$/, { timeout: 30_000 });
 	await expect(page.getByLabel('Name')).toHaveValue('Transformer 1');
 
-	await page.getByRole('button', { name: 'Add input' }).click();
-	await page.getByRole('option', { name: /Raw/ }).click();
+	await pickOption(page, 'Add input', /Raw/);
 	await page.getByRole('button', { name: 'Add', exact: true }).click();
 	await expect(page.locator('[data-input-index="0"]')).toContainText('Raw');
 
@@ -66,10 +66,8 @@ return Object.entries(totals).map(([city, total]) => ({ city, total }));`);
 	const gb = (await grid.boundingBox())!;
 	const chart = await createAndPlace(page, 'Chart', 'Totals', { x: gb.x + 60, y: gb.y + 40 });
 	await chart.getByRole('button', { name: 'Bind data' }).click();
-	await page.getByRole('button', { name: 'Source', exact: true }).click();
-	await page.getByRole('option', { name: 'Transformer 1' }).click();
-	await page.getByRole('button', { name: 'X field', exact: true }).click();
-	await page.getByRole('option', { name: 'city' }).click();
+	await pickOption(page, 'Source', 'Transformer 1');
+	await pickOption(page, 'X field', 'city');
 	await page.getByRole('checkbox', { name: 'total' }).click();
 	await page.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -109,8 +107,7 @@ test('a re-running transformer does not make its consumers rewind', async ({ pag
 	await page.goto('/datasources');
 	await expect(page.getByRole('button', { name: 'New datasource' })).toBeVisible({ timeout: 60_000 });
 	await page.getByRole('button', { name: 'New datasource' }).click();
-	await page.getByRole('button', { name: 'Type', exact: true }).click();
-	await page.getByRole('option', { name: 'External API (HTTP polling)' }).click();
+	await pickOption(page, 'Type', 'External API (HTTP polling)');
 	await page.getByLabel('Name').fill('Quota');
 	await page.getByLabel('URL').fill('https://api.example.test/quota');
 	await page.getByLabel('Poll every (seconds)').fill('5');
@@ -120,8 +117,7 @@ test('a re-running transformer does not make its consumers rewind', async ({ pag
 	await page.getByRole('link', { name: 'Transformers' }).click();
 	await page.getByRole('button', { name: 'New transformer' }).click();
 	await expect(page).toHaveURL(/\/transformers\/[0-9a-f-]+$/, { timeout: 30_000 });
-	await page.getByRole('button', { name: 'Add input' }).click();
-	await page.getByRole('option', { name: /Quota/ }).click();
+	await pickOption(page, 'Add input', /Quota/);
 	await page.getByRole('button', { name: 'Add', exact: true }).click();
 	await page.locator('#t-code').fill(`const end = Date.now() + 300;
 while (Date.now() < end) {} // widen the running window
@@ -139,18 +135,15 @@ return [{ label: 'quota', done: q.done, total: q.total }];`);
 	// value arrive — the field pickers are built from the producer's actual output.
 	const bar = await createAndPlace(page, 'Progress', 'Quota used', { x: gb.x + 60, y: gb.y + 40 });
 	await bar.getByRole('button', { name: 'Bind data' }).click();
-	await page.getByRole('button', { name: 'Source', exact: true }).click();
-	await page.getByRole('option', { name: /Transformer 1/ }).click();
+	await pickOption(page, 'Source', /Transformer 1/);
 	await page.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await expect(bar.getByTestId('progress-value')).not.toHaveText('—', { timeout: 30_000 });
 
 	await bar.getByRole('button', { name: 'Element actions' }).click();
 	await page.getByRole('menuitem', { name: 'Bind data' }).click();
-	await page.getByRole('button', { name: 'Value function' }).click();
-	await page.getByRole('option', { name: 'sum', exact: true }).click();
-	await page.getByRole('button', { name: 'Value field' }).click();
-	await page.getByRole('option', { name: 'done', exact: true }).click();
+	await pickOption(page, 'Value function', 'sum');
+	await pickOption(page, 'Value field', 'done');
 	await page.getByRole('checkbox', { name: 'Fixed total' }).click();
 	await page.getByLabel('Total', { exact: true }).fill('10');
 	await page.getByRole('button', { name: 'Save' }).click();
@@ -158,10 +151,8 @@ return [{ label: 'quota', done: q.done, total: q.total }];`);
 
 	const chart = await createAndPlace(page, 'Chart', 'Quota chart', { x: gb.x + 500, y: gb.y + 40 });
 	await chart.getByRole('button', { name: 'Bind data' }).click();
-	await page.getByRole('button', { name: 'Source', exact: true }).click();
-	await page.getByRole('option', { name: /Transformer 1/ }).click();
-	await page.getByRole('button', { name: 'X field', exact: true }).click();
-	await page.getByRole('option', { name: 'label', exact: true }).click();
+	await pickOption(page, 'Source', /Transformer 1/);
+	await pickOption(page, 'X field', 'label');
 	await page.getByRole('checkbox', { name: 'done' }).click();
 	await page.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByRole('dialog')).toHaveCount(0);

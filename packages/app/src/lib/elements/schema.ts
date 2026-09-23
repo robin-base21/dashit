@@ -73,6 +73,28 @@ export const SCHEMAS: Record<ElementKind, KindSchema> = {
     ],
     example: [{ done: true }, { done: false }, { done: true }],
   },
+  keyvalue: {
+    direction: "consumes",
+    summary: `Labelled readings. ${RECORDS}`,
+    fields: [
+      {
+        name: "<any field>",
+        type: "any",
+        note: "With one record and no fields chosen, every field becomes a row \u2014 which is what a status endpoint returns, and needs no configuration.",
+      },
+      { name: "<label field>", type: "string", note: "The row's name, when the data is a list of records." },
+      { name: "<value field>", type: "any", note: "The reading. Its type is inferred: numbers are grouped, ISO dates localized, booleans read Yes/No." },
+      {
+        name: "<metric field>",
+        type: "string",
+        note: "Optional unit for that row. \u201cms\u201d/\u201cs\u201d become durations, \u201cbytes\u201d scales to KB/MB, \u201c%\u201d appends, a currency code formats as money, anything else is appended as-is.",
+      },
+    ],
+    example: [
+      { name: "Latency", value: 1240, unit: "ms" },
+      { name: "Payload", value: 1536, unit: "bytes" },
+    ],
+  },
   progress: {
     direction: "consumes",
     summary: `Two numbers — a value and a total — each reduced from every record. ${RECORDS}`,

@@ -1,8 +1,8 @@
-export const ELEMENT_KINDS = ["task", "table", "chart", "aggregation", "progress"] as const;
+export const ELEMENT_KINDS = ["task", "table", "chart", "aggregation", "progress", "keyvalue"] as const;
 export type ElementKind = (typeof ELEMENT_KINDS)[number];
 
 export const EDITABLE_KINDS = ["task", "table"] as const satisfies readonly ElementKind[];
-export const OBSERVABLE_KINDS = ["chart", "aggregation", "progress"] as const satisfies readonly ElementKind[];
+export const OBSERVABLE_KINDS = ["chart", "aggregation", "progress", "keyvalue"] as const satisfies readonly ElementKind[];
 
 export function isEditable(kind: ElementKind): boolean {
   return (EDITABLE_KINDS as readonly string[]).includes(kind);

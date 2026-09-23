@@ -4,6 +4,7 @@ import ListChecksIcon from "@lucide/svelte/icons/list-checks";
 import Table2Icon from "@lucide/svelte/icons/table-2";
 import ChartColumnIcon from "@lucide/svelte/icons/chart-column";
 import CircleGaugeIcon from "@lucide/svelte/icons/circle-gauge";
+import TablePropertiesIcon from "@lucide/svelte/icons/table-properties";
 import SigmaIcon from "@lucide/svelte/icons/sigma";
 
 export type ElementCategory = "editable" | "observable";
@@ -49,6 +50,14 @@ export const KINDS: KindMeta[] = [
     category: "observable",
     icon: CircleGaugeIcon,
     defaultSize: { w: 3, h: 2 },
+  },
+  {
+    kind: "keyvalue",
+    label: "Key/value list",
+    description: "Labelled readings, formatted by type and unit.",
+    category: "observable",
+    icon: TablePropertiesIcon,
+    defaultSize: { w: 3, h: 4 },
   },
   {
     kind: "chart",

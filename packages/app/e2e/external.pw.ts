@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { pickOption } from './helpers.ts';
 
 async function createAndPlace(page: Page, kind: string, title: string, at: { x: number; y: number }) {
 	if (!(await page.locator('aside[aria-label="Elements"]').isVisible())) {
@@ -38,8 +39,7 @@ test('external datasource polls only while a visible chart consumes it', async (
 	await page.goto('/datasources');
 	await expect(page.getByRole('button', { name: 'New datasource' })).toBeVisible({ timeout: 60_000 });
 	await page.getByRole('button', { name: 'New datasource' }).click();
-	await page.getByRole('button', { name: 'Type', exact: true }).click();
-	await page.getByRole('option', { name: 'External API (HTTP polling)' }).click();
+	await pickOption(page, 'Type', 'External API (HTTP polling)');
 	await page.getByLabel('Name').fill('Metrics API');
 	await page.getByLabel('URL').fill('https://api.example.test/metrics');
 	await page.getByLabel('Poll every (seconds)').fill('5');
@@ -66,10 +66,8 @@ test('external datasource polls only while a visible chart consumes it', async (
 	const gb = (await grid.boundingBox())!;
 	const chart = await createAndPlace(page, 'Chart', 'Metrics chart', { x: gb.x + 60, y: gb.y + 40 });
 	await chart.getByRole('button', { name: 'Bind data' }).click();
-	await page.getByRole('button', { name: 'Source', exact: true }).click();
-	await page.getByRole('option', { name: 'Metrics API' }).click();
-	await page.getByRole('button', { name: 'X field', exact: true }).click();
-	await page.getByRole('option', { name: 't' }).click();
+	await pickOption(page, 'Source', 'Metrics API');
+	await pickOption(page, 'X field', 't');
 	await page.getByRole('checkbox', { name: 'v' }).click();
 	await page.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -101,8 +99,7 @@ test('a failing endpoint surfaces its error without breaking the page', async ({
 	await page.goto('/datasources');
 	await expect(page.getByRole('button', { name: 'New datasource' })).toBeVisible({ timeout: 60_000 });
 	await page.getByRole('button', { name: 'New datasource' }).click();
-	await page.getByRole('button', { name: 'Type', exact: true }).click();
-	await page.getByRole('option', { name: 'External API (HTTP polling)' }).click();
+	await pickOption(page, 'Type', 'External API (HTTP polling)');
 	await page.getByLabel('URL').fill('https://api.example.test/broken');
 	await page.getByRole('button', { name: 'Create' }).click();
 	const card = page.locator('[data-datasource-id]', { hasText: 'api.example.test' });
@@ -132,13 +129,11 @@ test('POST datasources send a JSON or text body; a Content-Type header overrides
 	await page.goto('/datasources');
 	await expect(page.getByRole('button', { name: 'New datasource' })).toBeVisible({ timeout: 60_000 });
 	await page.getByRole('button', { name: 'New datasource' }).click();
-	await page.getByRole('button', { name: 'Type', exact: true }).click();
-	await page.getByRole('option', { name: 'External API (HTTP polling)' }).click();
+	await pickOption(page, 'Type', 'External API (HTTP polling)');
 
 	// GET shows no body section.
 	await expect(page.getByTestId('body-section')).toHaveCount(0);
-	await page.getByRole('button', { name: 'Method', exact: true }).click();
-	await page.getByRole('option', { name: 'POST' }).click();
+	await pickOption(page, 'Method', 'POST');
 	await expect(page.getByTestId('body-section')).toBeVisible();
 
 	await page.getByLabel('Name').fill('GraphQL');
@@ -166,8 +161,7 @@ test('POST datasources send a JSON or text body; a Content-Type header overrides
 	// Edit → text body with an explicit Content-Type header; the header wins and the body is kept verbatim.
 	await card.getByRole('button', { name: 'Edit datasource' }).click();
 	await expect(page.getByLabel('Body', { exact: true })).toHaveValue('{"query":"{ items { id } }"}');
-	await page.getByRole('button', { name: 'Body type', exact: true }).click();
-	await page.getByRole('option', { name: 'Text' }).click();
+	await pickOption(page, 'Body type', 'Text');
 	await page.getByLabel('Body', { exact: true }).fill('id,name\n1,a');
 	await page.getByLabel(/Headers/).fill('X-Token: t2\nContent-Type: text/csv');
 	await page.getByRole('button', { name: 'Save' }).click();

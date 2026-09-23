@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { pickOption } from './helpers.ts';
 
 /**
  * Rows the datasource currently yields, read off its card. For a tracked source the dataflow node
@@ -20,8 +21,7 @@ async function newExternal(page: Page, fields: { name: string; url: string; path
 	await page.goto('/datasources');
 	await expect(page.getByRole('button', { name: 'New datasource' })).toBeVisible({ timeout: 60_000 });
 	await page.getByRole('button', { name: 'New datasource' }).click();
-	await page.getByRole('button', { name: 'Type', exact: true }).click();
-	await page.getByRole('option', { name: 'External API (HTTP polling)' }).click();
+	await pickOption(page, 'Type', 'External API (HTTP polling)');
 	await page.getByLabel('Name').fill(fields.name);
 	await page.getByLabel('URL').fill(fields.url);
 	await page.getByLabel('Poll every (seconds)').fill('5');
@@ -41,8 +41,7 @@ test('sample mode turns a single current value into a series', async ({ page }) 
 	});
 
 	await newExternal(page, { name: 'Now API', url: 'https://api.example.test/now' });
-	await page.getByLabel('History').click();
-	await page.getByRole('option', { name: 'Record each fetch' }).click();
+	await pickOption(page, 'History', 'Record each fetch');
 	await page.getByLabel('Keep last').fill('4');
 	await page.getByRole('button', { name: 'Create' }).click();
 
@@ -76,8 +75,7 @@ test('merge mode grows the series past the window the API returns', async ({ pag
 	});
 
 	await newExternal(page, { name: 'Series API', url: 'https://api.example.test/series', path: 'data' });
-	await page.getByLabel('History').click();
-	await page.getByRole('option', { name: 'Merge rows by key' }).click();
+	await pickOption(page, 'History', 'Merge rows by key');
 	await page.getByLabel('Key field').fill('t');
 	await page.getByRole('button', { name: 'Create' }).click();
 
@@ -107,8 +105,7 @@ test('a failed fetch leaves the recorded series intact', async ({ page }) => {
 	});
 
 	await newExternal(page, { name: 'Flaky API', url: 'https://api.example.test/flaky' });
-	await page.getByLabel('History').click();
-	await page.getByRole('option', { name: 'Record each fetch' }).click();
+	await pickOption(page, 'History', 'Record each fetch');
 	await page.getByRole('button', { name: 'Create' }).click();
 
 	await expect.poll(() => sampleCount(page, 'Flaky API'), { timeout: 30_000 }).toBeGreaterThanOrEqual(1);

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { pickOption } from './helpers.ts';
 
 async function createAndPlace(page: Page, kind: string, title: string, at: { x: number; y: number }) {
 	if (!(await page.locator('aside[aria-label="Elements"]').isVisible())) {
@@ -38,10 +39,8 @@ test('task list → internal datasource → aggregation updates live', async ({ 
 	// Internal datasource from the task list.
 	await page.getByRole('link', { name: 'Datasources' }).click();
 	await page.getByRole('button', { name: 'New datasource' }).click();
-	await page.getByRole('button', { name: 'Type', exact: true }).click();
-	await page.getByRole('option', { name: 'Element data (internal)' }).click();
-	await page.getByRole('button', { name: 'Element', exact: true }).click();
-	await page.getByRole('option', { name: /Todo/ }).click();
+	await pickOption(page, 'Type', 'Element data (internal)');
+	await pickOption(page, 'Element', /Todo/);
 	await page.getByLabel('Name').fill('Todo items');
 	await page.getByRole('button', { name: 'Create' }).click();
 	const dsCard = page.locator('[data-datasource-id]', { hasText: 'Todo items' });
@@ -54,12 +53,9 @@ test('task list → internal datasource → aggregation updates live', async ({ 
 	await expect(grid).toBeVisible();
 	const agg = await createAndPlace(page, 'Aggregation', 'Done count', { x: gb.x + 500, y: gb.y + 40 });
 	await agg.getByRole('button', { name: 'Bind data' }).click();
-	await page.getByRole('button', { name: 'Source', exact: true }).click();
-	await page.getByRole('option', { name: 'Todo items' }).click();
-	await page.getByRole('button', { name: 'Function', exact: true }).click();
-	await page.getByRole('option', { name: 'sum' }).click();
-	await page.getByRole('button', { name: 'Field', exact: true }).click();
-	await page.getByRole('option', { name: 'done' }).click();
+	await pickOption(page, 'Source', 'Todo items');
+	await pickOption(page, 'Function', 'sum');
+	await pickOption(page, 'Field', 'done');
 	await page.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 

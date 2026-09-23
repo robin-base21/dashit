@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { pickOption } from './helpers.ts';
 
 async function staticSource(page: Page, name: string, value: unknown) {
 	await page.goto('/datasources');
@@ -45,12 +46,9 @@ test('progress reads out a percentage, a ratio, and a fixed total', async ({ pag
 	const card = await createAndPlace(page, 'Progress', 'Chore progress');
 
 	await card.getByRole('button', { name: 'Bind data' }).click();
-	await page.getByRole('button', { name: 'Source', exact: true }).click();
-	await page.getByRole('option', { name: 'Chores' }).click();
-	await page.getByRole('button', { name: 'Value function' }).click();
-	await page.getByRole('option', { name: 'sum', exact: true }).click();
-	await page.getByRole('button', { name: 'Value field' }).click();
-	await page.getByRole('option', { name: 'done', exact: true }).click();
+	await pickOption(page, 'Source', 'Chores');
+	await pickOption(page, 'Value function', 'sum');
+	await pickOption(page, 'Value field', 'done');
 	await page.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 
@@ -63,8 +61,7 @@ test('progress reads out a percentage, a ratio, and a fixed total', async ({ pag
 	// Same numbers, shown as a ratio.
 	await card.getByRole('button', { name: 'Element actions' }).click();
 	await page.getByRole('menuitem', { name: 'Bind data' }).click();
-	await page.getByRole('button', { name: 'Show as' }).click();
-	await page.getByRole('option', { name: /Ratio/ }).click();
+	await pickOption(page, 'Show as', /Ratio/);
 	await page.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await expect(readout).toHaveText('2 / 3');
@@ -88,10 +85,8 @@ test('the data format dialog shows the expected shape beside the live one', asyn
 	const chart = await createAndPlace(page, 'Chart', 'CPU chart');
 
 	await chart.getByRole('button', { name: 'Bind data' }).click();
-	await page.getByRole('button', { name: 'Source', exact: true }).click();
-	await page.getByRole('option', { name: 'Metrics' }).click();
-	await page.getByRole('button', { name: 'X field', exact: true }).click();
-	await page.getByRole('option', { name: 't', exact: true }).click();
+	await pickOption(page, 'Source', 'Metrics');
+	await pickOption(page, 'X field', 't');
 	await page.getByRole('checkbox', { name: 'cpu' }).click();
 	await page.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByRole('dialog')).toHaveCount(0);

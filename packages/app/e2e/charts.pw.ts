@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { pickOption } from './helpers.ts';
 
 const TYPES = ['Bar', 'Line', 'Area', 'Pie', 'Radar', 'Radial'] as const;
 
@@ -40,10 +41,8 @@ test('every chart type renders from a static datasource and re-renders on config
 
 	// Unbound state offers "Bind data".
 	await card.getByRole('button', { name: 'Bind data' }).click();
-	await page.getByRole('button', { name: 'Source', exact: true }).click();
-	await page.getByRole('option', { name: 'Sales' }).click();
-	await page.getByRole('button', { name: 'X field', exact: true }).click();
-	await page.getByRole('option', { name: 'month' }).click();
+	await pickOption(page, 'Source', 'Sales');
+	await pickOption(page, 'X field', 'month');
 	await page.getByRole('checkbox', { name: 'desktop' }).click();
 	await page.getByRole('checkbox', { name: 'mobile' }).click();
 	await page.getByRole('button', { name: 'Save' }).click();
@@ -60,8 +59,7 @@ test('every chart type renders from a static datasource and re-renders on config
 	for (const t of TYPES.slice(1)) {
 		await card.getByRole('button', { name: 'Element actions' }).click();
 		await page.getByRole('menuitem', { name: 'Bind data…' }).click();
-		await page.getByRole('button', { name: 'Chart type', exact: true }).click();
-		await page.getByRole('option', { name: t, exact: true }).click();
+		await pickOption(page, 'Chart type', t);
 		await page.getByRole('button', { name: 'Save' }).click();
 		await expect(page.getByRole('dialog')).toHaveCount(0);
 		await expect(chart).toHaveAttribute('data-chart-type', t.toLowerCase());
@@ -118,10 +116,8 @@ test('a long timestamp axis is thinned and localized, never raw ISO', async ({ p
 	await expect(card).toBeVisible();
 
 	await card.getByRole('button', { name: 'Bind data' }).click();
-	await page.getByRole('button', { name: 'Source', exact: true }).click();
-	await page.getByRole('option', { name: 'Timeline' }).click();
-	await page.getByRole('button', { name: 'X field', exact: true }).click();
-	await page.getByRole('option', { name: 't', exact: true }).click();
+	await pickOption(page, 'Source', 'Timeline');
+	await pickOption(page, 'X field', 't');
 	await page.getByRole('checkbox', { name: 'cpu' }).click();
 	await page.getByRole('button', { name: 'Save' }).click();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -136,8 +132,7 @@ test('a long timestamp axis is thinned and localized, never raw ISO', async ({ p
 		if (type !== 'bar') {
 			await card.getByRole('button', { name: 'Element actions' }).click();
 			await page.getByRole('menuitem', { name: 'Bind data' }).click();
-			await page.getByRole('button', { name: 'Chart type' }).click();
-			await page.getByRole('option', { name: type === 'line' ? 'Line' : 'Area' }).click();
+			await pickOption(page, 'Chart type', type === 'line' ? 'Line' : 'Area');
 			await page.getByRole('button', { name: 'Save' }).click();
 			await expect(page.getByRole('dialog')).toHaveCount(0);
 		}

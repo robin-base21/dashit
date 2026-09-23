@@ -11,6 +11,7 @@
 	import { getDataflow } from '$lib/dataflow/engine.svelte';
 	import { parseAggregationConfig } from '$lib/elements/config';
 	import { parseProgressConfig, PROGRESS_DISPLAYS, type ProgressConfig, type ProgressDisplay } from '$lib/elements/progress-config';
+	import { parseKeyValueConfig, type KeyValueConfig } from '$lib/elements/keyvalue-config';
 	import { CHART_TYPES, CHART_TYPE_LABEL, parseChartConfig, type ChartConfig, type ChartType } from '$lib/elements/chart-config';
 	import { Checkbox } from '$lib/components/ui/checkbox';
 
@@ -33,6 +34,7 @@
 	let config = $derived<AggregationConfig>(parseAggregationConfig(element.config_json));
 	let chart = $derived<ChartConfig>(parseChartConfig(element.config_json));
 	let progress = $derived<ProgressConfig>(parseProgressConfig(element.config_json));
+	let keyvalue = $derived<KeyValueConfig>(parseKeyValueConfig(element.config_json));
 
 	const PROGRESS_DISPLAY_LABEL: Record<ProgressDisplay, string> = {
 		percent: 'Percentage (72%)',
@@ -50,6 +52,7 @@
 		config = parseAggregationConfig(element.config_json);
 		chart = parseChartConfig(element.config_json);
 		progress = parseProgressConfig(element.config_json);
+		keyvalue = parseKeyValueConfig(element.config_json);
 		open = false;
 	}
 
@@ -79,6 +82,8 @@
 				await db.call('updateElement', element.id, { config: { ...chart } as unknown as Record<string, unknown> });
 			} else if (element.kind === 'progress') {
 				await db.call('updateElement', element.id, { config: { ...progress } as unknown as Record<string, unknown> });
+			} else if (element.kind === 'keyvalue') {
+				await db.call('updateElement', element.id, { config: { ...keyvalue } as unknown as Record<string, unknown> });
 			}
 			open = false;
 		} catch (e) {
@@ -168,6 +173,36 @@
 						Horizontal bars
 					</label>
 				{/if}
+			{/if}
+
+			{#if element.kind === 'keyvalue'}
+				<div class="grid gap-3" data-testid="keyvalue-config">
+					<div class="grid grid-cols-3 gap-3">
+						{#each [{ key: 'label', name: 'Label field', auto: 'Auto' }, { key: 'value', name: 'Value field', auto: 'Auto' }, { key: 'metric', name: 'Metric field', auto: 'None' }] as const as f (f.key)}
+							<div class="grid gap-2">
+								<Label>{f.name}</Label>
+								<Select.Root
+									type="single"
+									value={keyvalue[f.key]}
+									onValueChange={(v) => (keyvalue = { ...keyvalue, [f.key]: v })}
+								>
+									<Select.Trigger class="w-full" aria-label={f.name}>{keyvalue[f.key] || f.auto}</Select.Trigger>
+									<Select.Content>
+										<Select.Item value="" label={f.auto}>{f.auto}</Select.Item>
+										{#each fields as name (name)}
+											<Select.Item value={name} label={name}>{name}</Select.Item>
+										{/each}
+									</Select.Content>
+								</Select.Root>
+							</div>
+						{/each}
+					</div>
+					<p class="text-xs text-muted-foreground">
+						Leave the label and value on <span class="font-medium">Auto</span> when the source is a single object
+						— every field becomes a row. The metric field holds each row's unit, so
+						<code>1240</code> with <code>ms</code> reads as <code>1.24 s</code>.
+					</p>
+				</div>
 			{/if}
 
 			{#if element.kind === 'progress'}

@@ -1,12 +1,12 @@
 # DashIt — Local-First Architecture & Phased Roadmap
 
-**Revision 8.** Revision 1 was reviewed and found to have two security-relevant flaws (recovery key sent to the server in plaintext; a bypassable transformer sandbox) and several "additive migration" claims that were not additive (a non-CRR-compatible schema, a WASM-binary swap disguised as a feature flag, no schema-evolution story, no service worker for the offline shell). Revision 2 fixed those. Revision 3 resolves every remaining open question (§11 is now a decision log), merges `checklist_items` into `task_items`, and tightens the sandbox CSP. Revision 4 folds the `checklist` element kind into `task`. Revision 5 adds tracked datasources. Revision 6 adds the progress observable and per-kind data-format docs. Revision 7 records the relay and passkey accounts as built. Revision 8 settles second-device onboarding. Changes are summarized in §12.
+**Revision 9.** Revision 1 was reviewed and found to have two security-relevant flaws (recovery key sent to the server in plaintext; a bypassable transformer sandbox) and several "additive migration" claims that were not additive (a non-CRR-compatible schema, a WASM-binary swap disguised as a feature flag, no schema-evolution story, no service worker for the offline shell). Revision 2 fixed those. Revision 3 resolves every remaining open question (§11 is now a decision log), merges `checklist_items` into `task_items`, and tightens the sandbox CSP. Revision 4 folds the `checklist` element kind into `task`. Revision 5 adds tracked datasources. Revision 6 adds the progress observable and per-kind data-format docs. Revision 7 records the relay and passkey accounts as built. Revision 8 settles second-device onboarding. Revision 9 adds the key/value list observable. Changes are summarized in §12.
 
 ## Context
 
 `dashit` is a Bun workspace with three packages: `app` (SvelteKit 2 / Svelte 5, Tailwind v4, shadcn-svelte initialized but no components added), `backend` (bare Bun), `shared` (placeholder). No git history, database, auth, or product code exists yet.
 
-The product is a **local-first dashboard**: users compose a dashboard from elements (editables: task list, table; observables: chart, aggregation, progress) fed by datasources (external HTTP/WebSocket, internal editables, static values) through optional user-written transformers. All application data lives in a SQLite database on each device. The Bun server is a **thin relay and auth service** that stores only ciphertext and WebAuthn public keys; it never sees plaintext content, datasource payloads, or API keys. Devices sync via encrypted CRDT changesets. An optional AI feature suggests transformer code using the user's own LLM key, which never leaves the device except to the LLM provider.
+The product is a **local-first dashboard**: users compose a dashboard from elements (editables: task list, table; observables: chart, aggregation, progress, key/value list) fed by datasources (external HTTP/WebSocket, internal editables, static values) through optional user-written transformers. All application data lives in a SQLite database on each device. The Bun server is a **thin relay and auth service** that stores only ciphertext and WebAuthn public keys; it never sees plaintext content, datasource payloads, or API keys. Devices sync via encrypted CRDT changesets. An optional AI feature suggests transformer code using the user's own LLM key, which never leaves the device except to the LLM provider.
 
 ---
 
@@ -126,7 +126,7 @@ CREATE TABLE dashboards (
 -- One row per element regardless of kind. Category (editable/observable) is derived from kind.
 CREATE TABLE elements (
   id          TEXT PRIMARY KEY NOT NULL,
-  kind        TEXT    NOT NULL DEFAULT '',   -- task | table | chart | aggregation | progress
+  kind        TEXT    NOT NULL DEFAULT '',   -- task | table | chart | aggregation | progress | keyvalue
   title       TEXT    NOT NULL DEFAULT '',
   config_json TEXT    NOT NULL DEFAULT '{}', -- kind-specific: chart type/axes, aggregation fn/expression, etc.
   created_at  INTEGER NOT NULL DEFAULT 0,
@@ -815,6 +815,18 @@ No open questions remain. Every "recommend and justify" point and every risk que
 ---
 
 ## 12. Change History
+
+### Revision 9 (key/value list observable)
+
+- `keyvalue` observable: labelled readings, with two shapes auto-detected. A single record needs no
+  configuration — every field becomes a row, which is what a status endpoint returns. Choosing a
+  label and value field handles a list of records instead.
+- An optional per-row *metric* field carries the unit, which turns formatting from a guess into a
+  rule: `ms`/`s` become durations, `bytes` scales, a currency code formats as money, anything else
+  is appended. Without a unit the type is inferred, conservatively — a numeric string converts only
+  if it round-trips, so `"0042"` stays an identifier.
+- One documented guess remains: with unit `%`, a magnitude at or below 1 is read as a fraction, so
+  `0.985` is `98.5%` and a genuine `0.9%` would read as `90%`. Nothing in the data can settle it.
 
 ### Revision 8 (second-device onboarding)
 
