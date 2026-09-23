@@ -27,7 +27,7 @@ export interface NodeState {
 const EMPTY: NodeState = { status: "idle", value: undefined, error: null, updatedAt: 0, version: 0 };
 
 // Tables whose changes require re-reading datasource values (editables and the external cache).
-const DATA_TABLES = ["task_items", "table_columns", "table_rows", "table_cells", "elements", "datasource_cache"];
+const DATA_TABLES = ["task_items", "table_columns", "table_rows", "table_cells", "elements", "datasource_cache", "datasource_samples"];
 const GRAPH_TABLES = ["datasources", "edges", "transformers", "transformer_versions", "placements", "elements"];
 
 /**
@@ -46,6 +46,8 @@ export class Dataflow {
   /** Receives the external datasources and the active set after every graph load. */
   externalRuntime: { sync(datasources: DatasourceRow[], activeIds: Set<string>): void } | null = null;
   #cache = new Map<string, { value: unknown; fetched_at: number | null; error: string | null }>();
+  /** Ordered history per tracked datasource; empty unless something is tracked. */
+  #samples = new Map<string, Record<string, unknown>[]>();
   #graph: Graph = buildGraph([]);
   #datasources = new Map<string, DatasourceRow>();
   #codeByTransformer = new Map<string, { code: string; timeoutMs: number; versionId: string }>();
@@ -116,7 +118,11 @@ export class Dataflow {
     ]);
     this.#graph = buildGraph(edges);
     this.#datasources = new Map(datasources.map((d) => [d.id, d]));
-    this.activeDatasourceIds = activeDatasources(this.#graph, visible);
+    // A tracked source stays active whatever the graph says: it is recording a series, and going
+    // idle whenever its chart is hidden would leave gaps the user never asked for (§5.3).
+    const active = activeDatasources(this.#graph, visible);
+    for (const d of datasources) if (d.kind === "external" && d.track_mode) active.add(d.id);
+    this.activeDatasourceIds = active;
     this.graphVersion++;
     this.externalRuntime?.sync(datasources, this.activeDatasourceIds);
 
@@ -147,6 +153,20 @@ export class Dataflow {
           { value: r.value_json === null ? undefined : JSON.parse(r.value_json), fetched_at: r.fetched_at, error: r.error },
         ]),
       );
+    }
+    // Gated like the cache read above. This re-reads every tracked source's whole history on each
+    // pass; at a few sources × a few hundred rows that is cheap, and `#set`'s diffing keeps it from
+    // re-rendering anything. If it ever matters, give each source a version counter and skip the
+    // ones that have not changed.
+    if ([...this.#datasources.values()].some((d) => d.track_mode)) {
+      const rows = await this.#db.call("listDatasourceSamples");
+      const byId = new Map<string, Record<string, unknown>[]>();
+      for (const r of rows) {
+        const list = byId.get(r.datasource_id) ?? [];
+        list.push(JSON.parse(r.value_json) as Record<string, unknown>);
+        byId.set(r.datasource_id, list);
+      }
+      this.#samples = byId;
     }
     // Datasources not in any edge still get evaluated so the datasources page can preview them.
     const order = new Set<NodeKey>(topologicalOrder(this.#graph));
@@ -206,8 +226,10 @@ export class Dataflow {
             this.#set(key, { status: active ? "running" : "inactive", value: undefined, error: null }, false);
             return;
           }
-          // Stale-but-present values render; the error (if any) is surfaced alongside.
-          value = cached.value;
+          // Stale-but-present values render; the error (if any) is surfaced alongside. A tracked
+          // source charts its history instead of the last response, but still takes its status and
+          // error from the cache, which is the freshest word on whether the endpoint is reachable.
+          value = ds.track_mode ? (this.#samples.get(id) ?? []) : cached.value;
           const changedExt = JSON.stringify(value) !== JSON.stringify(this.get(key).value);
           this.#set(key, { status: "ok", value, error: cached.error ?? null }, changedExt);
           return;

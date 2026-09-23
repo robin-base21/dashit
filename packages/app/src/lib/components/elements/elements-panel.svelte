@@ -6,7 +6,7 @@
 	import { getDb } from '$lib/db/context';
 	import { liveQuery } from '$lib/db/client.svelte';
 	import { getUi, type PanelTab } from '$lib/state/ui.svelte';
-	import { KIND_META } from '$lib/elements/kinds';
+	import { CATEGORIES, KIND_META } from '$lib/elements/kinds';
 	import CreateElementDialog from './create-element-dialog.svelte';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import XIcon from '@lucide/svelte/icons/x';
@@ -22,6 +22,13 @@
 	const unplaced = $derived((elements.value ?? []).filter((e) => !e.placed));
 	const hidden = $derived((elements.value ?? []).filter((e) => e.placed && e.hidden));
 	const list = $derived(ui.panelTab === 'unplaced' ? unplaced : hidden);
+
+	/** Editables and observables stay apart here too, so the panel reads like the create dialog. */
+	const groups = $derived(
+		CATEGORIES.map((cat) => ({ ...cat, items: list.filter((e) => KIND_META[e.kind].category === cat.category) })).filter(
+			(g) => g.items.length > 0
+		)
+	);
 
 	function startPlace(e: PointerEvent, elementId: string, kind: keyof typeof KIND_META, label: string) {
 		if (e.button !== 0) return;
@@ -62,51 +69,74 @@
 			</Tabs.List>
 
 			<ScrollArea class="min-h-0 flex-1">
-				<ul class="flex flex-col gap-2 p-3">
-					{#each list as el (el.id)}
-						{@const meta = KIND_META[el.kind]}
-						<li
-							class="group flex items-start gap-2 rounded-md border bg-card p-2 text-card-foreground"
-							data-element-id={el.id}
-						>
-							{#if ui.panelTab === 'unplaced'}
-								<button
-									type="button"
-									class="mt-0.5 cursor-grab touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing"
-									aria-label="Drag onto the dashboard"
-									onpointerdown={(e) => startPlace(e, el.id, el.kind, el.title || meta.label)}
-								>
-									<GripVerticalIcon class="size-4" />
-								</button>
-							{/if}
-							<div class="min-w-0 flex-1">
-								<div class="flex items-center gap-1.5 text-sm font-medium">
-									<meta.icon class="size-3.5 shrink-0 text-muted-foreground" />
-									<span class="truncate">{el.title || meta.label}</span>
-								</div>
-								<div class="text-xs text-muted-foreground">{meta.label}</div>
-							</div>
-							<div class="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-								{#if ui.panelTab === 'hidden'}
-									<Button size="icon-sm" variant="ghost" aria-label="Show on dashboard" onclick={() => unhide(el.id)}>
-										<EyeIcon class="size-4" />
-									</Button>
-								{/if}
-								<Button size="icon-sm" variant="ghost" aria-label="Delete element" onclick={() => remove(el.id, el.title || meta.label)}>
-									<Trash2Icon class="size-4" />
-								</Button>
-							</div>
-						</li>
+				<div class="flex flex-col gap-4 p-3">
+					{#each groups as group (group.category)}
+						<section class="flex flex-col gap-2">
+							<h3
+								class="flex items-baseline gap-1.5 px-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase"
+							>
+								{group.label}
+								<span class="font-normal tabular-nums">{group.items.length}</span>
+							</h3>
+							<ul class="flex flex-col gap-2">
+								{#each group.items as el (el.id)}
+									{@const meta = KIND_META[el.kind]}
+									<li
+										class={[
+											'group flex items-start gap-2 rounded-md border bg-card p-2 text-card-foreground',
+											group.category === 'observable' && 'border-dashed bg-muted/40'
+										]}
+										data-element-id={el.id}
+										data-category={group.category}
+									>
+										{#if ui.panelTab === 'unplaced'}
+											<button
+												type="button"
+												class="mt-0.5 cursor-grab touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing"
+												aria-label="Drag onto the dashboard"
+												onpointerdown={(e) => startPlace(e, el.id, el.kind, el.title || meta.label)}
+											>
+												<GripVerticalIcon class="size-4" />
+											</button>
+										{/if}
+										<div class="min-w-0 flex-1">
+											<div class="flex items-center gap-1.5 text-sm font-medium">
+												<meta.icon class="size-3.5 shrink-0 text-muted-foreground" />
+												<span class="truncate">{el.title || meta.label}</span>
+											</div>
+											<div class="text-xs text-muted-foreground">{meta.label}</div>
+										</div>
+										<div
+											class="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+										>
+											{#if ui.panelTab === 'hidden'}
+												<Button size="icon-sm" variant="ghost" aria-label="Show on dashboard" onclick={() => unhide(el.id)}>
+													<EyeIcon class="size-4" />
+												</Button>
+											{/if}
+											<Button
+												size="icon-sm"
+												variant="ghost"
+												aria-label="Delete element"
+												onclick={() => remove(el.id, el.title || meta.label)}
+											>
+												<Trash2Icon class="size-4" />
+											</Button>
+										</div>
+									</li>
+								{/each}
+							</ul>
+						</section>
 					{:else}
-						<li class="px-1 py-6 text-center text-sm text-muted-foreground">
+						<p class="px-1 py-6 text-center text-sm text-muted-foreground">
 							{#if ui.panelTab === 'unplaced'}
 								Nothing here. Create an element to place it on the dashboard.
 							{:else}
 								No hidden elements. Hide a placed element to park it here.
 							{/if}
-						</li>
+						</p>
 					{/each}
-				</ul>
+				</div>
 			</ScrollArea>
 		</Tabs.Root>
 	</aside>

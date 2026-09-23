@@ -1,12 +1,12 @@
 # DashIt — Local-First Architecture & Phased Roadmap
 
-**Revision 3.** Revision 1 was reviewed and found to have two security-relevant flaws (recovery key sent to the server in plaintext; a bypassable transformer sandbox) and several "additive migration" claims that were not additive (a non-CRR-compatible schema, a WASM-binary swap disguised as a feature flag, no schema-evolution story, no service worker for the offline shell). Revision 2 fixed those. Revision 3 resolves every remaining open question (§11 is now a decision log), merges `checklist_items` into `task_items`, and tightens the sandbox CSP. Changes are summarized in §12.
+**Revision 6.** Revision 1 was reviewed and found to have two security-relevant flaws (recovery key sent to the server in plaintext; a bypassable transformer sandbox) and several "additive migration" claims that were not additive (a non-CRR-compatible schema, a WASM-binary swap disguised as a feature flag, no schema-evolution story, no service worker for the offline shell). Revision 2 fixed those. Revision 3 resolves every remaining open question (§11 is now a decision log), merges `checklist_items` into `task_items`, and tightens the sandbox CSP. Revision 4 folds the `checklist` element kind into `task`. Revision 5 adds tracked datasources. Revision 6 adds the progress observable and per-kind data-format docs. Changes are summarized in §12.
 
 ## Context
 
 `dashit` is a Bun workspace with three packages: `app` (SvelteKit 2 / Svelte 5, Tailwind v4, shadcn-svelte initialized but no components added), `backend` (bare Bun), `shared` (placeholder). No git history, database, auth, or product code exists yet.
 
-The product is a **local-first dashboard**: users compose a dashboard from elements (editables: task, checklist, table; observables: chart, aggregation) fed by datasources (external HTTP/WebSocket, internal editables, static values) through optional user-written transformers. All application data lives in a SQLite database on each device. The Bun server is a **thin relay and auth service** that stores only ciphertext and WebAuthn public keys; it never sees plaintext content, datasource payloads, or API keys. Devices sync via encrypted CRDT changesets. An optional AI feature suggests transformer code using the user's own LLM key, which never leaves the device except to the LLM provider.
+The product is a **local-first dashboard**: users compose a dashboard from elements (editables: task list, table; observables: chart, aggregation, progress) fed by datasources (external HTTP/WebSocket, internal editables, static values) through optional user-written transformers. All application data lives in a SQLite database on each device. The Bun server is a **thin relay and auth service** that stores only ciphertext and WebAuthn public keys; it never sees plaintext content, datasource payloads, or API keys. Devices sync via encrypted CRDT changesets. An optional AI feature suggests transformer code using the user's own LLM key, which never leaves the device except to the LLM provider.
 
 ---
 
@@ -26,7 +26,7 @@ The product is a **local-first dashboard**: users compose a dashboard from eleme
 | Anonymous mode | **Permanent product option** (confirmed): fully usable without an account | Local-first ethos; account is offered for sync/backup, never required |
 | Eviction warning | Dismissible banner in Settings/sync status + a dashboard toast when local-only data is >24 h old (confirmed) | Informative without a sign-up wall |
 | Ordering | String-based fractional indexing (`sort_key TEXT`) | REAL midpoints exhaust precision; rebalancing under CRDT is itself a conflict |
-| Task/checklist model | **One `task_items` table** for both kinds (confirmed) | A checklist item is a root task item; nesting gives it sub-tasks; one table and cascade fewer |
+| Task/checklist model | **One `task_items` table**, and since rev 4 one `task` kind | A checklist was a task tree that started collapsed; the separate kind earned nothing |
 | Table cells | Own `table_cells` table (per-cell LWW) rather than a JSON blob per row | Concurrent edits to different cells of one row must both survive |
 | Transformer versions | **Code only** is versioned (confirmed); inputs live on `edges` | Reproducing old runs is not a goal; rollback keeps current inputs |
 | DEK lifetime | **Created with the account** (confirmed); anonymous users have no DEK | Keeps Phase 1–2 crypto-free; consequence: anonymous local secrets are unencrypted at rest (§4.9) |
@@ -126,7 +126,7 @@ CREATE TABLE dashboards (
 -- One row per element regardless of kind. Category (editable/observable) is derived from kind.
 CREATE TABLE elements (
   id          TEXT PRIMARY KEY NOT NULL,
-  kind        TEXT    NOT NULL DEFAULT '',   -- task | checklist | table | chart | aggregation
+  kind        TEXT    NOT NULL DEFAULT '',   -- task | table | chart | aggregation | progress
   title       TEXT    NOT NULL DEFAULT '',
   config_json TEXT    NOT NULL DEFAULT '{}', -- kind-specific: chart type/axes, aggregation fn/expression, etc.
   created_at  INTEGER NOT NULL DEFAULT 0,
@@ -152,12 +152,11 @@ CREATE INDEX idx_placements_dashboard ON placements(dashboard_id);
 
 -- Editable payloads --------------------------------------------------------
 
--- Shared by task and checklist elements. A checklist item is a root task item; a checklist
--- "contains tasks" by nesting children under an item (spec). elements.kind decides rendering
--- (tree for task, flat list with optional expansion for checklist).
+-- The payload of every `task` element: a tree of checkable items. A root item with children
+-- reads as a checklist entry that "contains tasks"; nesting is the only structure there is.
 CREATE TABLE task_items (
   id          TEXT PRIMARY KEY NOT NULL,
-  element_id  TEXT    NOT NULL DEFAULT '',   -- -> elements.id (kind=task | checklist)
+  element_id  TEXT    NOT NULL DEFAULT '',   -- -> elements.id (kind=task)
   parent_id   TEXT,                          -- -> task_items.id, NULL = root
   title       TEXT    NOT NULL DEFAULT '',
   done        INTEGER NOT NULL DEFAULT 0,
@@ -210,6 +209,9 @@ CREATE TABLE datasources (
   poll_interval_ms   INTEGER,
   response_path      TEXT,                     -- JSON pointer into the response body, optional
   secrets_ciphertext BLOB,                     -- AES-GCM({headers, body, body_type}) under K_ds (§4.1). Anonymous users (no DEK) store plaintext JSON here; encrypted on account creation (§4.9).
+  track_mode         TEXT,                     -- NULL = latest value only | sample | merge (§5.4)
+  track_key          TEXT,                     -- merge mode: the response field rows are keyed on
+  track_limit        INTEGER,                  -- samples kept per source; NULL = 500
   -- internal
   source_element_id  TEXT,                     -- -> elements.id (an editable)
   -- static
@@ -288,6 +290,17 @@ CREATE TABLE datasource_cache (
   value_json     TEXT,
   fetched_at     INTEGER,
   error          TEXT
+);
+
+-- History for tracked datasources (§5.4). Local-only for the same reason as the cache, with one
+-- extra consequence: the *config* above syncs but the samples do not, so each device accumulates
+-- its own series from when it first ran. A row per poll through the relay is the wrong trade.
+CREATE TABLE datasource_samples (
+  datasource_id  TEXT    NOT NULL,
+  sample_key     TEXT    NOT NULL,   -- sample mode: uuidv7(); merge mode: String(row[track_key])
+  at             INTEGER NOT NULL,   -- ingest time, never parsed out of the key
+  value_json     TEXT    NOT NULL,   -- one dataset row
+  PRIMARY KEY (datasource_id, sample_key)
 );
 
 -- Device-local secrets (LLM API key). Encrypted under K_local (§4.6). Excluded from sync structurally.
@@ -526,11 +539,13 @@ Transformers execute asynchronously in the sandbox (§7), so `$derived` cannot c
 
 ### 5.3 Activation
 
-A datasource is **active** iff a reverse traversal over `edges` from it reaches at least one element whose placement is present, `hidden = 0`, and not deleted. The active set is recomputed on placement/edge changes and diffed: newly active external datasources start their poll timer or WebSocket; newly inactive ones stop. Internal and static datasources have no runtime cost and are always "active" trivially. **Hidden = inactive** (confirmed).
+A datasource is **active** iff a reverse traversal over `edges` from it reaches at least one element whose placement is present, `hidden = 0`, and not deleted — **or** it is tracked (§5.4), because a source recording a series must not go idle whenever its chart happens to be hidden. The active set is recomputed on placement/edge changes and diffed: newly active external datasources start their poll timer or WebSocket; newly inactive ones stop. Internal and static datasources have no runtime cost and are always "active" trivially. **Hidden = inactive** (confirmed).
 
 ### 5.4 Runtime
 
-`DatasourceRuntime` (main thread; needs `fetch`/`WebSocket` with the user's credentials) is a singleton owning one poll timer or socket per active external datasource regardless of consumer count. Each fetch: decrypt `secrets_ciphertext` with `K_ds` → request → apply `response_path` → write `datasource_cache` → feed the scheduler. Polls pause when `document.hidden` (browsers throttle anyway) and resume with an immediate fetch on visibility. On startup the scheduler seeds datasource nodes from `datasource_cache` so the dashboard renders offline with stale values and a staleness indicator.
+`DatasourceRuntime` (main thread; needs `fetch`/`WebSocket` with the user's credentials) is a singleton owning one poll timer or socket per active external datasource regardless of consumer count. Each fetch: decrypt `secrets_ciphertext` with `K_ds` → request → apply `response_path` → write `datasource_cache` (and, when tracked, append to `datasource_samples` in the same transaction, via one `recordDatasourceFetch` command so the two can never disagree) → feed the scheduler. Polls pause when `document.hidden` (browsers throttle anyway) and resume with an immediate fetch on visibility — **except tracked sources**, which keep their cadence in the background, since a backgrounded tab is exactly when a dashboard is left recording.
+
+**Tracking (`track_mode`).** `sample` appends one row per fetch, shaped as the response's own fields plus a `sampled_at` ISO stamp, so an endpoint returning only a current value becomes a chartable series. `merge` upserts an array response's rows on `track_key`, so the stored series outgrows the window the API returns; rows are stored verbatim. Both keep the newest `track_limit` rows, evicted in the write transaction. A failed fetch records no sample — a transient 500 must not put a hole in the series. The cache keeps holding the latest raw response either way: a tracked node charts its history but still takes its status and error from the cache, which is the freshest word on reachability. Because `at` is ingest time rather than a timestamp read out of the payload, merge mode plots in the order rows were first seen, which assumes the API returns them in the order you want them charted; source-time ordering would be a later `track_at_field`. Changing the mode or key purges the history, since stored rows are shaped by both. Honest limit: this is "samples collected while the app was open", never a server-side series. On startup the scheduler seeds datasource nodes from `datasource_cache` so the dashboard renders offline with stale values and a staleness indicator.
 
 ---
 
@@ -662,10 +677,10 @@ Framework **Hono on Bun**; storage **`bun:sqlite`** (metadata tables plus envelo
 - Route groups: bare `src/routes/+layout.svelte`, DB-owning shell in `(app)/+layout.svelte`; `/spike` stays outside the shell because two owners of the OPFS access-handle pool cannot coexist.
 - Single-tab ownership via `navigator.locks` (`ifAvailable`); the database is opened only after the lock is won, otherwise a second tab would fail the OPFS probe and silently open a different IndexedDB database.
 - Sidebar (icons), grid (drag/place/resize/hide/delete, shove-down + compaction, live preview), unified Unplaced/Hidden panel, create dialog.
-- Editables on the shared `task_items` model (tree, collapsed-by-default checklists, nested add) and typed tables (per-cell rows); aggregation observable with a bind-data dialog; `static` and `internal` datasources page with live previews and the active badge.
+- Editables on the shared `task_items` model (tree, nested add) and typed tables (per-cell rows); aggregation observable with a bind-data dialog; `static` and `internal` datasources page with live previews and the active badge.
 - Dataflow engine: async DAG scheduler with input-signature short-circuiting; transformers already execute in the sandbox (UI arrives in 1.5).
 - Export/Import JSON (upsert by PK); Settings with storage status, `persist()` request, eviction banner and once-a-day toast.
-- **Acceptance met** (Playwright, Chromium + Firefox, plus offline against the production build): create a checklist, place it, tick items, nest a sub-task; bind an aggregation (`sum of done`) that updates live as items are ticked; hiding the aggregation deactivates its datasource and unhiding restores it; drop onto an occupied area shoves occupants down; hide/unhide/delete; reload persists; the URL opens offline with data; export → import into a fresh profile restores the element.
+- **Acceptance met** (Playwright, Chromium + Firefox, plus offline against the production build): create a task list, place it, tick items, nest a sub-task; bind an aggregation (`sum of done`) that updates live as items are ticked; hiding the aggregation deactivates its datasource and unhiding restores it; drop onto an occupied area shoves occupants down; hide/unhide/delete; reload persists; the URL opens offline with data; export → import into a fresh profile restores the element.
 - Findings: bits-ui dialogs swallow pointer events during their exit animation (tests wait for the dialog to detach); `getByRole` ignores `hasText`; default names computed from UI state race rapid clicks — defaults are now computed inside repository transactions.
 
 ### Phase 1.5 — Charts, external datasources, transformers — **done 2026-09-22**
@@ -682,7 +697,7 @@ Framework **Hono on Bun**; storage **`bun:sqlite`** (metadata tables plus envelo
 - Passkey registration/login with discoverable credentials (PRF captured but not yet used), email codes, sessions/refresh.
 - Sync engine end to end with a `DASHIT_PLAINTEXT_SYNC=1` dev flag (envelopes unencrypted) so CRDT behaviour, snapshots, pruning, `410` re-bootstrap, and schema-version gating are proven without crypto in the way. The flag cannot be enabled in production builds.
 - Anonymous-data adoption flow (§4.8).
-- **Acceptance:** two browser profiles on one account converge after concurrent offline edits to the same table row (different cells) and the same checklist (different items); a profile offline past retention re-bootstraps from a snapshot; a client with a lower `schema_version` refuses newer envelopes.
+- **Acceptance:** two browser profiles on one account converge after concurrent offline edits to the same table row (different cells) and the same task list (different items); a profile offline past retention re-bootstraps from a snapshot; a client with a lower `schema_version` refuses newer envelopes.
 
 ### Phase 3 — Encryption and key management
 - DEK generation at account creation, PRF wrapping (single-ceremony login; two-step only at enrollment), recovery key (Crockford base32, verifier/wrap split, email code), device cache, lock, "require passkey on launch".
@@ -720,13 +735,47 @@ No open questions remain. Every "recommend and justify" point and every risk que
 | 12 | Rate limits | Proposed numbers accepted as initial config | §9 |
 | 13 | Transformer input versioning | Code only | §2.3 |
 | 14 | DEK lifetime | Created with the account; anonymous secrets unencrypted at rest | §4.1, §4.9 |
-| 15 | Checklist model | One `task_items` table for task and checklist | §2.3 |
+| 15 | Checklist model | One `task_items` table; rev 4 dropped the separate `checklist` kind | §2.3 |
 
 **Explicitly out of scope for v1** (tracked in Phase 5+): DEK rotation after device compromise, QuickJS sandbox, responsive multi-breakpoint placements, WebSocket datasources, Tauri shell, device-key encryption of anonymous secrets, CORS proxy, multi-tab writes.
 
 ---
 
 ## 12. Change History
+
+### Revision 6 (progress observable, documented element formats)
+
+- `progress` observable: value and total are each an `AggregationConfig` resolved against the one
+  bound producer, so no dataflow or `edges` change was needed. The total may instead be a fixed
+  number. `display` selects the readout (`72%` or `30 / 45`); the bar fills by value/total either
+  way. Arithmetic lives in a pure `progressValues()` so the awkward cases — zero total, an
+  un-numeric value, an overrun, a negative — are tested without mounting a component.
+- Every element kind now documents its data contract (`packages/app/src/lib/elements/schema.ts`),
+  surfaced per element as "Data format…" beside the fields and first record actually arriving.
+  Observables document what they consume; editables document what `readElementData` emits to an
+  `internal` datasource.
+- `element-body.svelte` no longer ends in a bare `{:else}` that rendered unknown kinds as a chart;
+  every kind is listed and the fallback says so.
+
+### Revision 5 (tracked datasources)
+
+- `datasource_samples` plus `track_mode`/`track_key`/`track_limit` on `datasources` (§2.3, §5.4):
+  external sources can accumulate history instead of only holding the last response.
+- Migration v4 is the first to alter a live CRR table. `e2e/spike.pw.ts` now asserts more than the
+  version bump — that the new column survives a merge between two stores, which is what proves the
+  `crsql_begin_alter`/`crsql_commit_alter` protocol kept it under change tracking, and that the new
+  local table stays out of the changeset feed.
+- §5.3 gains its first exception: tracked sources are active regardless of what consumes them.
+
+### Revision 4 (post-1.5 cleanup)
+
+- `checklist` removed as an element kind. It and `task` shared `task_items`, rendered the same
+  component and differed only in whether sub-items started collapsed — a distinction that did not
+  justify a second kind. Migration v2 rewrites existing rows to `task`; the element is now
+  labelled "Task list".
+- Editables and observables are separated visually wherever elements are listed (create dialog,
+  elements panel, dashboard card): observables carry a dashed border and a tinted header, since
+  their content is derived and cannot be typed into.
 
 ### Revision 3 (decisions + second-pass fixes)
 

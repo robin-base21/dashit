@@ -1,8 +1,9 @@
 import { uuidv7 } from "../ids.ts";
 import { type LocalStore, type SqlValue, queryOne } from "../local-store.ts";
-import { DATASOURCE_KINDS, type DatasourceRow, type FetchMode } from "../types.ts";
+import { DATASOURCE_KINDS, type DatasourceRow, type DatasourceSampleRow, type FetchMode, type TrackMode } from "../types.ts";
 import { removeEdgesForNode } from "./edges.ts";
 import { encodeSecrets, hasSecrets, MIN_POLL_INTERVAL_MS, type DatasourceSecrets } from "../secrets.ts";
+import { rowsForMerge, shapeSample, trackLimit } from "../track.ts";
 
 export type CreateDatasourceInput =
   | { kind: "static"; name: string; value: unknown }
@@ -17,6 +18,10 @@ export type CreateDatasourceInput =
       response_path?: string;
       /** Headers and request body (API keys live here); stored in secrets_ciphertext. */
       secrets?: DatasourceSecrets;
+      /** History tracking; null/omitted keeps only the latest value (ARCHITECTURE.md §5.4). */
+      track_mode?: TrackMode | null;
+      track_key?: string | null;
+      track_limit?: number | null;
     };
 
 export async function createDatasource(
@@ -41,8 +46,8 @@ export async function createDatasource(
       break;
     case "external":
       await store.exec(
-        `INSERT INTO datasources (id, name, kind, fetch_mode, url, method, poll_interval_ms, response_path, secrets_ciphertext, created_at, updated_at)
-         VALUES (?, ?, 'external', ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO datasources (id, name, kind, fetch_mode, url, method, poll_interval_ms, response_path, secrets_ciphertext, track_mode, track_key, track_limit, created_at, updated_at)
+         VALUES (?, ?, 'external', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           input.name,
@@ -52,6 +57,9 @@ export async function createDatasource(
           Math.max(MIN_POLL_INTERVAL_MS, input.poll_interval_ms ?? 60_000),
           input.response_path ?? null,
           input.secrets && hasSecrets(input.secrets) ? encodeSecrets(input.secrets) : null,
+          input.track_mode ?? null,
+          input.track_key ?? null,
+          input.track_mode ? trackLimit(input.track_limit) : null,
           now,
           now,
         ],
@@ -80,6 +88,9 @@ export async function updateDatasource(
     response_path?: string | null;
     secrets?: DatasourceSecrets;
     static_value?: unknown;
+    track_mode?: TrackMode | null;
+    track_key?: string | null;
+    track_limit?: number | null;
   },
   now: number = Date.now(),
 ): Promise<void> {
@@ -95,8 +106,29 @@ export async function updateDatasource(
     params.push(hasSecrets(patch.secrets) ? encodeSecrets(patch.secrets) : null);
   }
   if (patch.static_value !== undefined) sets.push("static_value_json = ?"), params.push(JSON.stringify(patch.static_value));
+  if (patch.track_mode !== undefined) sets.push("track_mode = ?"), params.push(patch.track_mode ?? null);
+  if (patch.track_key !== undefined) sets.push("track_key = ?"), params.push(patch.track_key ?? null);
+  if (patch.track_limit !== undefined) {
+    sets.push("track_limit = ?");
+    params.push(patch.track_limit === null ? null : trackLimit(patch.track_limit));
+  }
   params.push(id);
-  await store.exec(`UPDATE datasources SET ${sets.join(", ")} WHERE id = ? AND deleted_at IS NULL`, params);
+
+  await store.transaction(async (tx) => {
+    // Stored rows are shaped by the mode and identified by the key, so history from the old
+    // settings cannot be read under the new ones. Compare against the current row rather than
+    // trusting the patch: re-saving the dialog unchanged must not wipe a long recording.
+    const current = await queryOne<Pick<DatasourceRow, "track_mode" | "track_key">>(
+      tx,
+      `SELECT track_mode, track_key FROM datasources WHERE id = ?`,
+      [id],
+    );
+    const modeChanged = patch.track_mode !== undefined && (patch.track_mode ?? null) !== (current?.track_mode ?? null);
+    const keyChanged = patch.track_key !== undefined && (patch.track_key ?? null) !== (current?.track_key ?? null);
+
+    await tx.exec(`UPDATE datasources SET ${sets.join(", ")} WHERE id = ? AND deleted_at IS NULL`, params);
+    if (modeChanged || keyChanged) await tx.exec(`DELETE FROM datasource_samples WHERE datasource_id = ?`, [id]);
+  });
 }
 
 export interface DatasourceCacheRow {
@@ -132,10 +164,72 @@ export async function setDatasourceCache(
   );
 }
 
+/**
+ * Every successful fetch of an external datasource, in one transaction: the latest-value cache
+ * always, plus a history row when the source is tracked. One command rather than two calls from
+ * the runtime, so the cache and the samples can never disagree.
+ *
+ * Failures do **not** come through here — they call `setDatasourceCache({ error })`, because a
+ * transient 500 must not punch a hole in the recorded series.
+ */
+export async function recordDatasourceFetch(
+  store: LocalStore,
+  input: {
+    datasource_id: string;
+    value: unknown;
+    track_mode?: TrackMode | null;
+    track_key?: string | null;
+    track_limit?: number | null;
+  },
+  now: number = Date.now(),
+): Promise<void> {
+  // Shaping throws on an unusable response (e.g. merge mode against a non-array); let it surface
+  // before the transaction opens, so the caller reports it like any other fetch error.
+  const rows = input.track_mode === "merge" ? rowsForMerge(input.value, input.track_key) : [];
+
+  await store.transaction(async (tx) => {
+    await setDatasourceCache(tx, { datasource_id: input.datasource_id, value: input.value }, now);
+    if (!input.track_mode) return;
+
+    if (input.track_mode === "sample") {
+      await tx.exec(
+        `INSERT INTO datasource_samples (datasource_id, sample_key, at, value_json) VALUES (?, ?, ?, ?)`,
+        [input.datasource_id, uuidv7(now), now, JSON.stringify(shapeSample(input.value, now))],
+      );
+    } else {
+      for (const { key, row } of rows) {
+        await tx.exec(
+          `INSERT INTO datasource_samples (datasource_id, sample_key, at, value_json) VALUES (?, ?, ?, ?)
+           ON CONFLICT(datasource_id, sample_key) DO UPDATE SET value_json = excluded.value_json, at = excluded.at`,
+          [input.datasource_id, key, now, JSON.stringify(row)],
+        );
+      }
+    }
+
+    // Keep the newest N by deleting everything outside that set. Going the other way — deleting
+    // rows older than the Nth newest via LIMIT 1 OFFSET N — keeps N+1 and is ambiguous when rows
+    // share an `at`, which merge mode makes routine; the rowid tiebreak settles it.
+    await tx.exec(
+      `DELETE FROM datasource_samples WHERE datasource_id = ? AND rowid NOT IN (
+         SELECT rowid FROM datasource_samples WHERE datasource_id = ? ORDER BY at DESC, rowid DESC LIMIT ?
+       )`,
+      [input.datasource_id, input.datasource_id, trackLimit(input.track_limit)],
+    );
+  });
+}
+
+/** Every tracked source's history, oldest first. Local-only, like the cache. */
+export async function listDatasourceSamples(store: LocalStore): Promise<DatasourceSampleRow[]> {
+  return store.query<DatasourceSampleRow>(
+    `SELECT * FROM datasource_samples ORDER BY datasource_id, at, rowid`,
+  );
+}
+
 export async function deleteDatasource(store: LocalStore, id: string, now: number = Date.now()): Promise<void> {
   await store.transaction(async (tx) => {
     await tx.exec(`UPDATE datasources SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, [now, now, id]);
     await removeEdgesForNode(tx, "datasource", id, now);
     await tx.exec(`DELETE FROM datasource_cache WHERE datasource_id = ?`, [id]);
+    await tx.exec(`DELETE FROM datasource_samples WHERE datasource_id = ?`, [id]);
   });
 }

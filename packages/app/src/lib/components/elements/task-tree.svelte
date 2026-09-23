@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { ElementKind, TaskItemRow } from 'shared';
+	import type { TaskItemRow } from 'shared';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import { Button } from '$lib/components/ui/button';
@@ -8,7 +8,7 @@
 	import TaskTreeNode from './task-tree-node.svelte';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 
-	let { elementId, kind }: { elementId: string; kind: ElementKind } = $props();
+	let { elementId }: { elementId: string } = $props();
 
 	const db = getDb();
 	const items = liveQuery(db, (d) => d.call('listTaskItems', elementId), ['task_items']);
@@ -25,9 +25,8 @@
 		return map;
 	});
 
-	// Checklists start collapsed (they read as flat lists); task trees start expanded.
+	/** Item ids the user has collapsed; sub-tasks are shown by default. */
 	const collapsed = new SvelteSet<string>();
-	const defaultCollapsed = $derived(kind === 'checklist');
 
 	let draft = $state('');
 	let adding = $state(false);
@@ -46,7 +45,7 @@
 <div class="flex h-full flex-col text-sm">
 	<ul class="flex-1 space-y-0.5 p-2" role="tree" aria-label="Items">
 		{#each children.get('root') ?? [] as item (item.id)}
-			<TaskTreeNode {item} {children} {collapsed} {defaultCollapsed} depth={0} />
+			<TaskTreeNode {item} {children} {collapsed} depth={0} />
 		{:else}
 			{#if !adding}
 				<li class="px-2 py-3 text-center text-xs text-muted-foreground">No items yet.</li>
@@ -58,7 +57,7 @@
 		<Checkbox class="invisible" aria-hidden="true" tabindex={-1} />
 		<input
 			class="min-w-0 flex-1 rounded bg-transparent px-1 py-0.5 text-sm outline-none placeholder:text-muted-foreground focus:ring-1 focus:ring-ring"
-			placeholder={kind === 'checklist' ? 'Add an item…' : 'Add a task…'}
+			placeholder="Add a task…"
 			bind:value={draft}
 			onfocus={() => (adding = true)}
 			onblur={() => (adding = false)}

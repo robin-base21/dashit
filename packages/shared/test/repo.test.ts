@@ -33,7 +33,7 @@ async function count(sql: string, params: string[] = []): Promise<number> {
 
 describe("placements", () => {
   test("place, hide, unplace, re-place", async () => {
-    const el = await createElement(store, { kind: "checklist", title: "Todo" });
+    const el = await createElement(store, { kind: "task", title: "Todo" });
     expect(await listVisibleElementIds(store)).toEqual([]);
 
     await placeElement(store, el, { dashboard_id: dashboard, x: 0, y: 0, w: 4, h: 3 });

@@ -6,7 +6,7 @@
 	import * as ChartUi from '$lib/components/ui/chart';
 	import { Button } from '$lib/components/ui/button';
 	import { getDataflow } from '$lib/dataflow/engine.svelte';
-	import { parseChartConfig, seriesColor } from '$lib/elements/chart-config';
+	import { labelFormatters, MAX_CATEGORY_TICKS, parseChartConfig, seriesColor } from '$lib/elements/chart-config';
 	import BindDataDialog from './bind-data-dialog.svelte';
 	import LinkIcon from '@lucide/svelte/icons/link';
 
@@ -28,18 +28,30 @@
 		});
 	});
 
+	// Timestamps are stored as ISO strings; localize them for display only, never in `__x`, which
+	// is the band-scale domain key and has to stay unique.
+	const xLabel = $derived(labelFormatters(rows.map((r) => r.__x)));
+
 	const series = $derived(config.y.map((key, i) => ({ key, label: key, color: seriesColor(i) })));
 	const chartConfig = $derived(Object.fromEntries(series.map((s) => [s.key, { label: s.label, color: s.color }])) satisfies ChartUi.ChartConfig);
 
 	// Pie / radial: one slice per record, colored per record.
 	const slices = $derived(rows.map((r, i) => ({ key: r.__x || String(i + 1), value: (r[config.y[0] ?? ''] as number | null) ?? 0, color: seriesColor(i) })));
-	const sliceConfig = $derived(Object.fromEntries(slices.map((s) => [s.key, { label: s.key, color: s.color }])) satisfies ChartUi.ChartConfig);
+	const sliceConfig = $derived(Object.fromEntries(slices.map((s) => [s.key, { label: xLabel.tick(s.key), color: s.color }])) satisfies ChartUi.ChartConfig);
 
 	const ready = $derived(bound.state.status === 'ok' && config.y.length > 0 && rows.length > 0);
 
 	// Radar: long format (one row per record × series).
 	const radarRows = $derived(rows.flatMap((r) => config.y.map((f) => ({ axis: r.__x, series: f, value: (r[f] as number | null) ?? 0 }))));
 	const radarMax = $derived(Math.max(1, ...radarRows.map((r) => r.value)));
+
+	// Cap the labels on whichever axis carries the categories — the x axis, or the y axis when bars
+	// run horizontally. Without it a band scale draws its whole domain (see MAX_CATEGORY_TICKS).
+	const categoryAxis = $derived(
+		config.horizontal && config.type === 'bar'
+			? { yAxis: { ticks: MAX_CATEGORY_TICKS, format: xLabel.tick } }
+			: { xAxis: { ticks: MAX_CATEGORY_TICKS, format: xLabel.tick } }
+	);
 
 	let bindOpen = $state(false);
 </script>
@@ -86,7 +98,7 @@
 				yPadding={[0, 8]}
 				padding={24}
 				radial
-				props={{ yAxis: { ticks: 4 }, grid: { class: 'stroke-border/60' } }}
+				props={{ xAxis: { ticks: MAX_CATEGORY_TICKS, format: xLabel.tick }, yAxis: { ticks: 4 }, grid: { class: 'stroke-border/60' } }}
 			>
 				{#snippet marks()}
 					{#each series as s (s.key)}
@@ -98,21 +110,21 @@
 	{:else}
 		<ChartUi.Container config={chartConfig} class="aspect-auto h-full w-full">
 			{#if config.type === 'bar'}
-				<BarChart data={rows} x="__x" xScale={scaleBand().padding(0.25)} orientation={config.horizontal ? 'horizontal' : 'vertical'} axis={config.horizontal ? 'y' : 'x'} seriesLayout="group" {series} props={{ bars: { radius: 3 } }}>
+				<BarChart data={rows} x="__x" xScale={scaleBand().padding(0.25)} orientation={config.horizontal ? 'horizontal' : 'vertical'} axis={config.horizontal ? 'y' : 'x'} seriesLayout="group" {series} props={{ bars: { radius: 3 }, ...categoryAxis }}>
 					{#snippet tooltip()}
-						<ChartUi.Tooltip />
+						<ChartUi.Tooltip labelFormatter={(v) => xLabel.full(v)} />
 					{/snippet}
 				</BarChart>
 			{:else if config.type === 'line'}
-				<LineChart data={rows} x="__x" xScale={scaleBand()} {series} props={{ spline: { class: 'stroke-2' } }}>
+				<LineChart data={rows} x="__x" xScale={scaleBand()} {series} props={{ spline: { class: 'stroke-2' }, ...categoryAxis }}>
 					{#snippet tooltip()}
-						<ChartUi.Tooltip />
+						<ChartUi.Tooltip labelFormatter={(v) => xLabel.full(v)} />
 					{/snippet}
 				</LineChart>
 			{:else}
-				<AreaChart data={rows} x="__x" xScale={scaleBand()} {series} props={{ area: { fillOpacity: 0.25, line: { class: 'stroke-2' } } }}>
+				<AreaChart data={rows} x="__x" xScale={scaleBand()} {series} props={{ area: { fillOpacity: 0.25, line: { class: 'stroke-2' } }, ...categoryAxis }}>
 					{#snippet tooltip()}
-						<ChartUi.Tooltip />
+						<ChartUi.Tooltip labelFormatter={(v) => xLabel.full(v)} />
 					{/snippet}
 				</AreaChart>
 			{/if}

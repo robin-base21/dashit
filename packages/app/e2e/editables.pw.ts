@@ -28,10 +28,10 @@ async function createAndPlace(page: Page, kind: string, title: string, at: { x: 
 	return card;
 }
 
-test('checklist items with a nested sub-task', async ({ page }) => {
+test('task items with a nested sub-task', async ({ page }) => {
 	await fresh(page);
 	const gb = (await page.getByTestId('dashboard-grid').boundingBox())!;
-	const card = await createAndPlace(page, 'Checklist', 'Chores', { x: gb.x + 60, y: gb.y + 40 });
+	const card = await createAndPlace(page, 'Task list', 'Chores', { x: gb.x + 60, y: gb.y + 40 });
 
 	const input = card.getByLabel('New item');
 	await input.fill('Laundry');

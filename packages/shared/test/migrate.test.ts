@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { currentSchemaVersion, migrate, SchemaTooNewError } from "../src/migrate.ts";
-import { LOCAL_TABLES, SCHEMA_VERSION, SYNCED_TABLES } from "../src/schema.ts";
+import { LOCAL_TABLES, MIGRATIONS, SCHEMA_VERSION, SYNCED_TABLES } from "../src/schema.ts";
 import { BunSqliteStore } from "./bun-sqlite-store.ts";
 
 describe("migrate", () => {
@@ -30,6 +30,37 @@ describe("migrate", () => {
     await migrate(store, { crr: false });
     await store.exec(`UPDATE local_meta SET value = ? WHERE key = 'schema_version'`, [String(SCHEMA_VERSION + 1)]);
     await expect(migrate(store, { crr: false })).rejects.toBeInstanceOf(SchemaTooNewError);
+  });
+
+  test("upgrades a v1 database, rewriting the retired checklist kind", async () => {
+    // A genuine v1-era database: apply only the first migration, then let migrate() carry it
+    // forward. Rewinding `schema_version` on an up-to-date database would instead replay the
+    // ALTERs in v4, which — unlike CREATE TABLE IF NOT EXISTS — are not replay-safe.
+    const store = new BunSqliteStore();
+    const v1 = MIGRATIONS[0]!;
+    for (const sql of v1.statements) await store.exec(sql);
+    await store.exec(`INSERT INTO local_meta (key, value) VALUES ('schema_version', '1')`);
+    await store.exec(`INSERT INTO elements (id, kind, title) VALUES ('e1', 'checklist', 'Chores')`);
+
+    expect(await migrate(store, { crr: false })).toBe(SCHEMA_VERSION);
+
+    const [el] = await store.query<{ kind: string }>(`SELECT kind FROM elements WHERE id = 'e1'`);
+    expect(el?.kind).toBe("task");
+    const cols = await store.query<{ name: string }>(`PRAGMA table_info(datasources)`);
+    expect(cols.some((c) => c.name === "track_mode")).toBe(true);
+  });
+
+  test("adds the tracking columns to datasources", async () => {
+    const store = new BunSqliteStore();
+    await migrate(store, { crr: false });
+    const cols = await store.query<{ name: string; notnull: number; dflt_value: string | null }>(
+      `PRAGMA table_info(datasources)`,
+    );
+    const track = cols.filter((c) => c.name.startsWith("track_"));
+    expect(track.map((c) => c.name).sort()).toEqual(["track_key", "track_limit", "track_mode"]);
+    // The CRR-rules test below covers nullability across every synced table; this asserts the
+    // altered columns specifically, since they arrive by ALTER rather than in the CREATE.
+    for (const c of track) expect(c.notnull, `datasources.${c.name} must be nullable`).toBe(0);
   });
 
   test("synced tables obey CRR rules: PK present, non-PK columns nullable or defaulted, no FKs", async () => {

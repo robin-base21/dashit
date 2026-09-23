@@ -30,12 +30,24 @@ export interface MergeResult {
   concurrentMerge?: { title: string; config: string };
 }
 
+export interface AlterResult {
+  ok: boolean;
+  error?: string;
+  /** The columns migration v4 added, as PRAGMA reports them. */
+  columns?: string[];
+  /** `track_mode` as it arrived on B: proves the altered column is still CRR-tracked. */
+  trackModeOnB?: string | null;
+  /** Writes to a local table must never enter the changeset feed. */
+  sampleChanges?: number;
+}
+
 export interface SpikeReport {
   userAgent: string;
   schemaVersion: number;
   opfsSupported: boolean;
   vfs: VfsResult[];
   merge: MergeResult;
+  alter: AlterResult;
 }
 
 const CELLS = 10_000;
@@ -107,7 +119,7 @@ async function mergeTest(): Promise<MergeResult> {
     await migrate(b, { crr: true });
 
     const dash = await createDashboard(a, { name: "A" });
-    const el = await createElement(a, { kind: "checklist", title: "from A" });
+    const el = await createElement(a, { kind: "task", title: "from A" });
     await placeElement(a, el, { dashboard_id: dash, x: 1, y: 2, w: 3, h: 4 });
 
     const changes = await a.changesSince(0);
@@ -146,6 +158,53 @@ async function mergeTest(): Promise<MergeResult> {
   }
 }
 
+/**
+ * Migration v4 is the project's first `crsql_begin_alter`/`crsql_commit_alter` on a live CRR table,
+ * and no unit test can reach it (the bun:sqlite double runs `crr: false`). A version bump alone
+ * would pass even if the new columns had been detached from change tracking, so this merges a
+ * tracked datasource across two stores and checks the column actually arrives.
+ */
+async function alterTest(): Promise<AlterResult> {
+  try {
+    progress("alter: start");
+    const a = await openStore("alter-a", "memory");
+    const b = await openStore("alter-b", "memory");
+    await migrate(a, { crr: true });
+    await migrate(b, { crr: true });
+
+    const info = await a.query<{ name: string }>(`PRAGMA table_info(datasources)`);
+    const columns = info.map((c) => c.name).filter((n) => n.startsWith("track_"));
+
+    // Raw SQL, not the repository: this is a check on the schema, not on the repo layer.
+    await a.exec(
+      `INSERT INTO datasources (id, name, kind, url, fetch_mode, track_mode, track_limit, created_at, updated_at)
+       VALUES ('ds-alter', 'tracked', 'external', 'https://example.invalid/m', 'poll', 'sample', 10, 1, 1)`,
+    );
+
+    const before = await a.dbVersion();
+    await a.exec(
+      `INSERT INTO datasource_samples (datasource_id, sample_key, at, value_json) VALUES ('ds-alter', 'k1', 1, '{}')`,
+    );
+    const localChanges = await a.changesSince(before);
+
+    await b.applyChanges(await a.changesSince(0));
+    const [rowB] = await b.query<{ track_mode: string | null }>(
+      `SELECT track_mode FROM datasources WHERE id = 'ds-alter'`,
+    );
+
+    await a.close();
+    await b.close();
+    return {
+      ok: columns.length === 3 && rowB?.track_mode === "sample" && localChanges.length === 0,
+      columns,
+      trackModeOnB: rowB?.track_mode ?? null,
+      sampleChanges: localChanges.length,
+    };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? `${e.name}: ${e.message}\n${e.stack}` : String(e) };
+  }
+}
+
 self.onmessage = async (ev: MessageEvent<{ marker: string; reset: boolean }>) => {
   if (ev.data.reset) {
     await resetOpfs();
@@ -157,6 +216,7 @@ self.onmessage = async (ev: MessageEvent<{ marker: string; reset: boolean }>) =>
     opfsSupported: await opfsAvailable(),
     vfs: [await persistence("opfs-ahp", ev.data.marker, "opfs"), await persistence("idb", ev.data.marker, "idb")],
     merge: await mergeTest(),
+    alter: await alterTest(),
   };
   progress("done");
   self.postMessage({ report });

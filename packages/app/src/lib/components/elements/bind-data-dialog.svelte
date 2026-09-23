@@ -4,11 +4,13 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import * as Select from '$lib/components/ui/select';
 	import { Button } from '$lib/components/ui/button';
+	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { getDb } from '$lib/db/context';
 	import { liveQuery } from '$lib/db/client.svelte';
 	import { getDataflow } from '$lib/dataflow/engine.svelte';
 	import { parseAggregationConfig } from '$lib/elements/config';
+	import { parseProgressConfig, PROGRESS_DISPLAYS, type ProgressConfig, type ProgressDisplay } from '$lib/elements/progress-config';
 	import { CHART_TYPES, CHART_TYPE_LABEL, parseChartConfig, type ChartConfig, type ChartType } from '$lib/elements/chart-config';
 	import { Checkbox } from '$lib/components/ui/checkbox';
 
@@ -30,11 +32,24 @@
 	let producer = $derived<string>(current ?? '');
 	let config = $derived<AggregationConfig>(parseAggregationConfig(element.config_json));
 	let chart = $derived<ChartConfig>(parseChartConfig(element.config_json));
+	let progress = $derived<ProgressConfig>(parseProgressConfig(element.config_json));
+
+	const PROGRESS_DISPLAY_LABEL: Record<ProgressDisplay, string> = {
+		percent: 'Percentage (72%)',
+		ratio: 'Ratio (30 / 45)'
+	};
+
+	/** A fixed total and an aggregated one are mutually exclusive, so the toggle swaps which is held. */
+	const totalIsFixed = $derived(typeof progress.total === 'number');
+	function setTotalFixed(fixed: boolean) {
+		progress = { ...progress, total: fixed ? 100 : { fn: 'count' } };
+	}
 
 	function cancel() {
 		producer = current ?? '';
 		config = parseAggregationConfig(element.config_json);
 		chart = parseChartConfig(element.config_json);
+		progress = parseProgressConfig(element.config_json);
 		open = false;
 	}
 
@@ -62,6 +77,8 @@
 				await db.call('updateElement', element.id, { config: next as unknown as Record<string, unknown> });
 			} else if (element.kind === 'chart') {
 				await db.call('updateElement', element.id, { config: { ...chart } as unknown as Record<string, unknown> });
+			} else if (element.kind === 'progress') {
+				await db.call('updateElement', element.id, { config: { ...progress } as unknown as Record<string, unknown> });
 			}
 			open = false;
 		} catch (e) {
@@ -151,6 +168,123 @@
 						Horizontal bars
 					</label>
 				{/if}
+			{/if}
+
+			{#if element.kind === 'progress'}
+				{@const total = progress.total}
+				<div class="grid gap-3" data-testid="progress-config">
+					<div class="grid grid-cols-2 gap-3">
+						<div class="grid gap-2">
+							<Label>Value function</Label>
+							<Select.Root
+								type="single"
+								value={progress.value.fn}
+								onValueChange={(v) => (progress = { ...progress, value: { ...progress.value, fn: v as AggregationConfig['fn'] } })}
+							>
+								<Select.Trigger class="w-full" aria-label="Value function">{progress.value.fn}</Select.Trigger>
+								<Select.Content>
+									{#each AGGREGATION_FNS as fn (fn)}
+										<Select.Item value={fn} label={fn}>{fn}</Select.Item>
+									{/each}
+								</Select.Content>
+							</Select.Root>
+						</div>
+						<div class="grid gap-2">
+							<Label>Value field</Label>
+							<Select.Root
+								type="single"
+								value={progress.value.field ?? ''}
+								onValueChange={(v) => (progress = { ...progress, value: { ...progress.value, field: v || undefined } })}
+							>
+								<Select.Trigger class="w-full" aria-label="Value field">
+									{progress.value.field ?? (progress.value.fn === 'count' ? 'All records' : 'Pick a field')}
+								</Select.Trigger>
+								<Select.Content>
+									{#if progress.value.fn === 'count'}
+										<Select.Item value="" label="All records">All records</Select.Item>
+									{/if}
+									{#each fields as f (f)}
+										<Select.Item value={f} label={f}>{f}</Select.Item>
+									{/each}
+								</Select.Content>
+							</Select.Root>
+						</div>
+					</div>
+
+					<label class="flex items-center gap-2 text-sm">
+						<Checkbox checked={totalIsFixed} onCheckedChange={(v) => setTotalFixed(v === true)} aria-label="Fixed total" />
+						Fixed total
+					</label>
+
+					{#if typeof total === 'number'}
+						<div class="grid gap-2">
+							<Label for="progress-total">Total</Label>
+							<Input
+								id="progress-total"
+								type="number"
+								value={total}
+								oninput={(e) => (progress = { ...progress, total: Number(e.currentTarget.value) })}
+							/>
+						</div>
+					{:else}
+						<div class="grid grid-cols-2 gap-3">
+							<div class="grid gap-2">
+								<Label>Total function</Label>
+								<Select.Root
+									type="single"
+									value={total.fn}
+									onValueChange={(v) => (progress = { ...progress, total: { ...total, fn: v as AggregationConfig['fn'] } })}
+								>
+									<Select.Trigger class="w-full" aria-label="Total function">{total.fn}</Select.Trigger>
+									<Select.Content>
+										{#each AGGREGATION_FNS as fn (fn)}
+											<Select.Item value={fn} label={fn}>{fn}</Select.Item>
+										{/each}
+									</Select.Content>
+								</Select.Root>
+							</div>
+							<div class="grid gap-2">
+								<Label>Total field</Label>
+								<Select.Root
+									type="single"
+									value={total.field ?? ''}
+									onValueChange={(v) => (progress = { ...progress, total: { ...total, field: v || undefined } })}
+								>
+									<Select.Trigger class="w-full" aria-label="Total field">
+										{total.field ?? (total.fn === 'count' ? 'All records' : 'Pick a field')}
+									</Select.Trigger>
+									<Select.Content>
+										{#if total.fn === 'count'}
+											<Select.Item value="" label="All records">All records</Select.Item>
+										{/if}
+										{#each fields as f (f)}
+											<Select.Item value={f} label={f}>{f}</Select.Item>
+										{/each}
+									</Select.Content>
+								</Select.Root>
+							</div>
+						</div>
+					{/if}
+
+					<div class="grid gap-2">
+						<Label>Show as</Label>
+						<Select.Root
+							type="single"
+							value={progress.display}
+							onValueChange={(v) => (progress = { ...progress, display: v as ProgressDisplay })}
+						>
+							<Select.Trigger class="w-full" aria-label="Show as">{PROGRESS_DISPLAY_LABEL[progress.display]}</Select.Trigger>
+							<Select.Content>
+								{#each PROGRESS_DISPLAYS as d (d)}
+									<Select.Item value={d} label={PROGRESS_DISPLAY_LABEL[d]}>{PROGRESS_DISPLAY_LABEL[d]}</Select.Item>
+								{/each}
+							</Select.Content>
+						</Select.Root>
+					</div>
+					<p class="text-xs text-muted-foreground">
+						A true/false field counts as 1/0, so a task list is <code>sum of done</code> over <code>count</code>.
+					</p>
+				</div>
 			{/if}
 
 			{#if element.kind === 'aggregation'}

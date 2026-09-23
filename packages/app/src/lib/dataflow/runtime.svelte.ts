@@ -10,8 +10,9 @@ export interface FetchState {
 
 /**
  * Owns one poll timer per active external datasource (ARCHITECTURE.md §5.4). Runs on the main
- * thread because it needs `fetch` with the user's headers. Results go to `datasource_cache`; the
- * dataflow engine picks them up through the table-change subscription.
+ * thread because it needs `fetch` with the user's headers. Results go to `datasource_cache` and,
+ * for tracked sources, `datasource_samples`; the dataflow engine picks them up through the
+ * table-change subscription.
  */
 export class DatasourceRuntime {
   readonly states = new SvelteMap<string, FetchState>();
@@ -20,12 +21,16 @@ export class DatasourceRuntime {
   #timers = new Map<string, ReturnType<typeof setInterval>>();
   #sources = new Map<string, DatasourceRow>();
   #active = new Set<string>();
+  /** Tracked sources keep sampling with the tab in the background; see `#paused`. */
+  #tracked = new Set<string>();
   #paused = typeof document !== "undefined" && document.hidden;
   #onVisibility = () => {
     const hidden = document.hidden;
     if (hidden === this.#paused) return;
     this.#paused = hidden;
-    if (!hidden) for (const id of this.#active) void this.fetchNow(id);
+    // Catch-up is for sources that were paused; tracked ones never stopped, and an extra
+    // fetch on every tab focus would put off-cadence rows into their history.
+    if (!hidden) for (const id of this.#active) if (!this.#tracked.has(id)) void this.fetchNow(id);
   };
 
   constructor(db: Db) {
@@ -60,6 +65,7 @@ export class DatasourceRuntime {
     }
     this.#sources = next;
     this.#active = new Set([...activeIds].filter((id) => next.has(id)));
+    this.#tracked = new Set(external.filter((d) => d.track_mode).map((d) => d.id));
   }
 
   async fetchNow(id: string): Promise<void> {
@@ -70,7 +76,14 @@ export class DatasourceRuntime {
     this.states.set(id, { busy: true, lastAttemptAt: Date.now() });
     try {
       const value = await fetchDatasource(ds);
-      await this.#db.call("setDatasourceCache", { datasource_id: id, value });
+      // One command, one transaction: the latest-value cache and the history row cannot disagree.
+      await this.#db.call("recordDatasourceFetch", {
+        datasource_id: id,
+        value,
+        track_mode: ds.track_mode,
+        track_key: ds.track_key,
+        track_limit: ds.track_limit,
+      });
     } catch (e) {
       await this.#db.call("setDatasourceCache", { datasource_id: id, error: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -85,11 +98,15 @@ export class DatasourceRuntime {
 
   #startTimer(ds: DatasourceRow): void {
     const every = Math.max(MIN_POLL_INTERVAL_MS, ds.poll_interval_ms ?? 60_000);
-    if (!this.#paused) void this.fetchNow(ds.id);
+    // A tracked source ignores the visibility pause: stopping would put a hole in the recording,
+    // and a backgrounded tab is exactly when a dashboard is left running. Browsers throttle
+    // background timers to roughly a minute, which is fine at tracking intervals.
+    const due = () => !this.#paused || this.#tracked.has(ds.id);
+    if (due()) void this.fetchNow(ds.id);
     this.#timers.set(
       ds.id,
       setInterval(() => {
-        if (!this.#paused) void this.fetchNow(ds.id);
+        if (due()) void this.fetchNow(ds.id);
       }, every),
     );
   }

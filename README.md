@@ -1,7 +1,7 @@
 # dashit
 
-Local-first dashboard: compose a dashboard from editable elements (tasks, checklists, tables) and
-observables (charts, aggregations) fed by datasources through user-written transformers. Data lives
+Local-first dashboard: compose a dashboard from editable elements (task lists, tables) and
+observables (charts, aggregations, progress bars) fed by datasources through user-written transformers. Data lives
 in SQLite on each device and syncs between devices as encrypted changesets through a thin relay
 that never sees plaintext.
 

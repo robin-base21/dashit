@@ -21,13 +21,13 @@ async function createAndPlace(page: Page, kind: string, title: string, at: { x: 
 	return card;
 }
 
-test('checklist → internal datasource → aggregation updates live', async ({ page }) => {
+test('task list → internal datasource → aggregation updates live', async ({ page }) => {
 	await page.goto('/dashboard');
 	const grid = page.getByTestId('dashboard-grid');
 	await expect(grid).toBeVisible({ timeout: 60_000 });
 	const gb = (await grid.boundingBox())!;
 
-	const list = await createAndPlace(page, 'Checklist', 'Todo', { x: gb.x + 60, y: gb.y + 40 });
+	const list = await createAndPlace(page, 'Task list', 'Todo', { x: gb.x + 60, y: gb.y + 40 });
 	for (const t of ['One', 'Two', 'Three']) {
 		const input = list.getByLabel('New item');
 		await input.fill(t);
@@ -35,7 +35,7 @@ test('checklist → internal datasource → aggregation updates live', async ({ 
 	}
 	await expect(list.getByRole('treeitem')).toHaveCount(3);
 
-	// Internal datasource from the checklist.
+	// Internal datasource from the task list.
 	await page.getByRole('link', { name: 'Datasources' }).click();
 	await page.getByRole('button', { name: 'New datasource' }).click();
 	await page.getByRole('button', { name: 'Type', exact: true }).click();

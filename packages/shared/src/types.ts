@@ -1,8 +1,8 @@
-export const ELEMENT_KINDS = ["task", "checklist", "table", "chart", "aggregation"] as const;
+export const ELEMENT_KINDS = ["task", "table", "chart", "aggregation", "progress"] as const;
 export type ElementKind = (typeof ELEMENT_KINDS)[number];
 
-export const EDITABLE_KINDS = ["task", "checklist", "table"] as const satisfies readonly ElementKind[];
-export const OBSERVABLE_KINDS = ["chart", "aggregation"] as const satisfies readonly ElementKind[];
+export const EDITABLE_KINDS = ["task", "table"] as const satisfies readonly ElementKind[];
+export const OBSERVABLE_KINDS = ["chart", "aggregation", "progress"] as const satisfies readonly ElementKind[];
 
 export function isEditable(kind: ElementKind): boolean {
   return (EDITABLE_KINDS as readonly string[]).includes(kind);
@@ -13,6 +13,15 @@ export type DatasourceKind = (typeof DATASOURCE_KINDS)[number];
 
 export const FETCH_MODES = ["poll", "websocket"] as const;
 export type FetchMode = (typeof FETCH_MODES)[number];
+
+/**
+ * How an external datasource keeps history (NULL = not tracked, the default).
+ * `sample` appends one row per fetch, so an endpoint returning the current value becomes
+ * graphable. `merge` upserts an array response's rows on `track_key`, so the stored series can
+ * outgrow the window the API returns.
+ */
+export const TRACK_MODES = ["sample", "merge"] as const;
+export type TrackMode = (typeof TRACK_MODES)[number];
 
 export const COLUMN_TYPES = ["string", "number", "date", "boolean"] as const;
 export type ColumnType = (typeof COLUMN_TYPES)[number];
@@ -97,11 +106,23 @@ export interface DatasourceRow {
   poll_interval_ms: number | null;
   response_path: string | null;
   secrets_ciphertext: Uint8Array | null;
+  track_mode: TrackMode | null;
+  track_key: string | null;
+  track_limit: number | null;
   source_element_id: string | null;
   static_value_json: string | null;
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
+}
+
+/** One stored observation of a tracked datasource. Local-only; see `schema.ts` v3. */
+export interface DatasourceSampleRow {
+  datasource_id: string;
+  sample_key: string;
+  /** Ingest time, not a timestamp taken from the payload. */
+  at: number;
+  value_json: string;
 }
 
 export interface TransformerRow {

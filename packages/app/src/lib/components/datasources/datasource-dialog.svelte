@@ -8,13 +8,17 @@
 		methodHasBody,
 		MIN_POLL_INTERVAL_MS,
 		parseHeaderLines,
+		DEFAULT_TRACK_LIMIT,
+		MAX_TRACK_LIMIT,
+		MIN_TRACK_LIMIT,
 		validateBody,
 		type BodyType,
 		type CreateDatasourceInput,
 		type DatasourceKind,
 		type DatasourceRow,
 		type DatasourceSecrets,
-		type ElementRow
+		type ElementRow,
+		type TrackMode
 	} from 'shared';
 	import { toast } from 'svelte-sonner';
 	import { Button } from '$lib/components/ui/button';
@@ -67,6 +71,32 @@
 	let bodyText = $derived(decoded.body ?? '');
 
 	const BODY_LABEL: Record<BodyType, string> = { json: 'JSON', text: 'Text' };
+
+	type TrackChoice = TrackMode | 'off';
+	const TRACK_LABEL: Record<TrackChoice, string> = {
+		off: 'Latest value only',
+		sample: 'Record each fetch',
+		merge: 'Merge rows by key'
+	};
+	const TRACK_HINT: Record<TrackChoice, string> = {
+		off: 'Each poll replaces the last. Right for an API that already returns a series.',
+		sample: 'Appends one row per poll, so a single current value becomes a series you can chart.',
+		merge: "Upserts the response's rows on a key field, so the stored series can outgrow the window the API returns."
+	};
+
+	let trackMode = $derived<TrackChoice>(editing?.track_mode ?? 'off');
+	let trackKey = $derived(editing?.track_key ?? '');
+	let trackLimitText = $derived(String(editing?.track_limit ?? DEFAULT_TRACK_LIMIT));
+
+	const trackFields = $derived(
+		trackMode === 'off'
+			? { track_mode: null, track_key: null, track_limit: null }
+			: {
+					track_mode: trackMode,
+					track_key: trackMode === 'merge' ? trackKey.trim() : null,
+					track_limit: Number(trackLimitText) || DEFAULT_TRACK_LIMIT
+				}
+	);
 
 	let jsonError = $state<string | null>(null);
 	let bodyError = $state<string | null>(null);
@@ -141,7 +171,8 @@
 						method,
 						poll_interval_ms: Math.max(MIN_POLL_INTERVAL_MS, Number(intervalSec) * 1000 || 60_000),
 						response_path: responsePath.trim() || null,
-						secrets: sec
+						secrets: sec,
+						...trackFields
 					});
 				} else {
 					await db.call('updateDatasource', editing.id, { name: n || editing.name });
@@ -178,7 +209,8 @@
 						method,
 						poll_interval_ms: Math.max(MIN_POLL_INTERVAL_MS, Number(intervalSec) * 1000 || 60_000),
 						response_path: responsePath.trim() || undefined,
-						secrets: sec
+						secrets: sec,
+						...trackFields
 					};
 				}
 				await db.call('createDatasource', input);
@@ -255,7 +287,7 @@
 							{/each}
 						</Select.Content>
 					</Select.Root>
-					{#if editables.length === 0}<p class="text-xs text-muted-foreground">Create a task, checklist or table first.</p>{/if}
+					{#if editables.length === 0}<p class="text-xs text-muted-foreground">Create a task list or table first.</p>{/if}
 				</div>
 			{:else}
 				<div class="grid grid-cols-[6rem_1fr] gap-2">
@@ -284,6 +316,57 @@
 						<Label for="ds-path">Response path</Label>
 						<Input id="ds-path" bind:value={responsePath} placeholder="data.items or /data/items" />
 					</div>
+				</div>
+				<div class="grid gap-2" data-testid="track-section">
+					<div class="grid grid-cols-2 gap-2">
+						<div class="grid gap-2">
+							<Label for="ds-track">History</Label>
+							<Select.Root type="single" value={trackMode} onValueChange={(v) => (trackMode = v as TrackChoice)}>
+								<Select.Trigger id="ds-track" aria-label="History">{TRACK_LABEL[trackMode]}</Select.Trigger>
+								<Select.Content>
+									{#each ['off', 'sample', 'merge'] as const as m (m)}
+										<Select.Item value={m} label={TRACK_LABEL[m]}>{TRACK_LABEL[m]}</Select.Item>
+									{/each}
+								</Select.Content>
+							</Select.Root>
+						</div>
+						{#if trackMode === 'merge'}
+							<div class="grid gap-2">
+								<Label for="ds-track-key">Key field</Label>
+								<Input id="ds-track-key" bind:value={trackKey} placeholder="t" />
+							</div>
+						{:else if trackMode === 'sample'}
+							<div class="grid gap-2">
+								<Label for="ds-track-limit">Keep last</Label>
+								<Input
+									id="ds-track-limit"
+									type="number"
+									min={MIN_TRACK_LIMIT}
+									max={MAX_TRACK_LIMIT}
+									bind:value={trackLimitText}
+								/>
+							</div>
+						{/if}
+					</div>
+					{#if trackMode === 'merge'}
+						<div class="grid gap-2">
+							<Label for="ds-track-limit-merge">Keep last</Label>
+							<Input
+								id="ds-track-limit-merge"
+								type="number"
+								min={MIN_TRACK_LIMIT}
+								max={MAX_TRACK_LIMIT}
+								bind:value={trackLimitText}
+							/>
+						</div>
+					{/if}
+					<p class="text-xs text-muted-foreground">{TRACK_HINT[trackMode]}</p>
+					{#if trackMode !== 'off'}
+						<p class="text-xs text-muted-foreground">
+							A tracked source keeps polling while the app is open, even when nothing on the dashboard shows it.
+							History is recorded per device and is not synced.
+						</p>
+					{/if}
 				</div>
 				<div class="grid gap-2">
 					<Label for="ds-headers">Headers (one per line, <code>Key: Value</code>)</Label>

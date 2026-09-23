@@ -6,11 +6,12 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "bun run --filter app dev",
+    "dev": "bun run --filter app --filter dummy_api dev",
     "dev:backend": "bun run --filter backend dev",
+    "dev:dummy": "bun run --filter dummy_api dev",
     "build": "bun run --filter app build",
     "check": "bun run typecheck && bun run --filter app check",
-    "typecheck": "tsc --noEmit -p packages/shared && tsc --noEmit -p packages/backend",
+    "typecheck": "tsc --noEmit -p packages/shared && tsc --noEmit -p packages/backend && tsc --noEmit -p packages/dummy_api",
     "test": "bun test"
   },
   "devDependencies": {

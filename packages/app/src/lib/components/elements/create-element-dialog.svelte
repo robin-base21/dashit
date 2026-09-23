@@ -7,12 +7,12 @@
 	import { Label } from '$lib/components/ui/label';
 	import { getDb } from '$lib/db/context';
 	import { getUi } from '$lib/state/ui.svelte';
-	import { KINDS } from '$lib/elements/kinds';
+	import { CATEGORIES, KINDS } from '$lib/elements/kinds';
 
 	const db = getDb();
 	const ui = getUi();
 
-	let kind = $state<ElementKind>('checklist');
+	let kind = $state<ElementKind>('task');
 	let title = $state('');
 	let saving = $state(false);
 
@@ -42,26 +42,36 @@
 		</Dialog.Header>
 
 		<div class="grid gap-4">
-			<div class="grid grid-cols-2 gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Element type">
-				{#each KINDS as k (k.kind)}
-					<button
-						type="button"
-						role="radio"
-						aria-checked={kind === k.kind}
-						class={[
-							'flex flex-col items-start gap-1 rounded-md border p-3 text-left text-sm transition-colors hover:bg-accent',
-							kind === k.kind && 'border-primary bg-accent'
-						]}
-						onclick={() => (kind = k.kind)}
-					>
-						<span class="flex items-center gap-2 font-medium">
-							<k.icon class="size-4" />
-							{k.label}
-						</span>
-						<span class="text-xs text-muted-foreground">{k.description}</span>
-					</button>
-				{/each}
-			</div>
+			{#each CATEGORIES as cat (cat.category)}
+				<div class="grid gap-2">
+					<div class="flex items-baseline gap-2">
+						<h3 class="text-xs font-semibold tracking-wide text-foreground uppercase">{cat.label}</h3>
+						<span class="text-xs text-muted-foreground">{cat.hint}</span>
+					</div>
+					<div class="grid grid-cols-2 gap-2" role="radiogroup" aria-label="{cat.label} element type">
+						{#each cat.kinds as k (k.kind)}
+							<button
+								type="button"
+								role="radio"
+								aria-checked={kind === k.kind}
+								data-category={cat.category}
+								class={[
+									'flex flex-col items-start gap-1 rounded-md border p-3 text-left text-sm transition-colors hover:bg-accent',
+									cat.category === 'observable' && 'border-dashed bg-muted/40',
+									kind === k.kind && 'border-primary bg-accent'
+								]}
+								onclick={() => (kind = k.kind)}
+							>
+								<span class="flex items-center gap-2 font-medium">
+									<k.icon class="size-4" />
+									{k.label}
+								</span>
+								<span class="text-xs text-muted-foreground">{k.description}</span>
+							</button>
+						{/each}
+					</div>
+				</div>
+			{/each}
 
 			<div class="grid gap-2">
 				<Label for="element-title">Title</Label>

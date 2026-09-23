@@ -14,21 +14,18 @@
 		item,
 		children,
 		collapsed,
-		defaultCollapsed,
 		depth
 	}: {
 		item: TaskItemRow;
 		children: Map<string, TaskItemRow[]>;
 		collapsed: SvelteSet<string>;
-		defaultCollapsed: boolean;
 		depth: number;
 	} = $props();
 
 	const db = getDb();
 
 	const kids = $derived(children.get(item.id) ?? []);
-	// Membership in `collapsed` toggles away from the default for this element kind.
-	const isOpen = $derived(kids.length > 0 && (defaultCollapsed ? collapsed.has(item.id) : !collapsed.has(item.id)));
+	const isOpen = $derived(kids.length > 0 && !collapsed.has(item.id));
 
 	let editing = $state(false);
 	let draft = $state('');
@@ -72,7 +69,6 @@
 			return;
 		}
 		childDraft = '';
-		if (defaultCollapsed && !collapsed.has(item.id)) collapsed.add(item.id);
 		await db.call('addTaskItem', { element_id: item.element_id, title, parent_id: item.id });
 	}
 
@@ -129,7 +125,7 @@
 		<ul role="group" class="space-y-0.5">
 			{#if isOpen}
 				{#each kids as kid (kid.id)}
-					<Self item={kid} {children} {collapsed} {defaultCollapsed} depth={depth + 1} />
+					<Self item={kid} {children} {collapsed} depth={depth + 1} />
 				{/each}
 			{/if}
 			{#if addingChild}

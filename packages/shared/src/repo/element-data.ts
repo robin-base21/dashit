@@ -7,15 +7,14 @@ export type Dataset = Record<string, unknown>[];
 
 /**
  * An editable element exposed as a dataset (the `internal` datasource contract).
- * task/checklist: one record per item with tree metadata. table: one record per row keyed by column name.
+ * task: one record per item with tree metadata. table: one record per row keyed by column name.
  */
 export async function readElementData(store: LocalStore, elementId: string): Promise<Dataset> {
   const el = await getElement(store, elementId);
   if (!el) return [];
 
   switch (el.kind) {
-    case "task":
-    case "checklist": {
+    case "task": {
       const items = await listTaskItems(store, elementId);
       const depth = new Map<string, number>();
       for (const it of items) depth.set(it.id, it.parent_id ? (depth.get(it.parent_id) ?? 0) + 1 : 0);

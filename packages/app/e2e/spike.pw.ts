@@ -23,6 +23,13 @@ test('cr-sqlite persistence, merge, and sandbox egress', async ({ page, browserN
 	expect(first.error).toBeNull();
 	expect(first.db?.merge.ok, first.db?.merge.error).toBe(true);
 
+	// Migration v4 alters a live CRR table — the one path no unit test can reach.
+	const alter = first.db!.alter;
+	expect(alter.error).toBeUndefined();
+	expect(alter.columns?.sort()).toEqual(['track_key', 'track_limit', 'track_mode']);
+	expect(alter.trackModeOnB, 'altered column lost its cr-sqlite change tracking').toBe('sample');
+	expect(alter.sampleChanges, 'datasource_samples must stay out of the changeset feed').toBe(0);
+
 	for (const v of first.db!.vfs) {
 		if (!v.supported) continue;
 		expect(v.error, `${v.vfs}: ${v.error}`).toBeUndefined();

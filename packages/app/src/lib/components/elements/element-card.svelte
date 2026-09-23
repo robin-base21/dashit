@@ -7,6 +7,8 @@
 	import { KIND_META } from '$lib/elements/kinds';
 	import ElementBody from './element-body.svelte';
 	import BindDataDialog from './bind-data-dialog.svelte';
+	import ElementSchemaDialog from './element-schema-dialog.svelte';
+	import InfoIcon from '@lucide/svelte/icons/info';
 	import LinkIcon from '@lucide/svelte/icons/link';
 	import GripVerticalIcon from '@lucide/svelte/icons/grip-vertical';
 	import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
@@ -32,6 +34,7 @@
 	let editingTitle = $state(false);
 	let draftTitle = $state('');
 	let bindOpen = $state(false);
+	let schemaOpen = $state(false);
 	const observable = $derived(meta.category === 'observable');
 
 	function startEdit() {
@@ -63,12 +66,14 @@
 <article
 	class={[
 		'relative flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-card text-card-foreground shadow-xs',
+		observable && 'border-dashed',
 		dragging && 'opacity-60 ring-2 ring-primary'
 	]}
 	data-element-id={element.id}
 	data-kind={element.kind}
+	data-category={meta.category}
 >
-	<header class="flex items-center gap-1 border-b px-2 py-1">
+	<header class={['flex items-center gap-1 border-b px-2 py-1', observable && 'bg-muted/40']}>
 		<button
 			type="button"
 			class="cursor-grab touch-none rounded p-0.5 text-muted-foreground hover:text-foreground active:cursor-grabbing"
@@ -116,6 +121,10 @@
 						Bind data…
 					</DropdownMenu.Item>
 				{/if}
+				<DropdownMenu.Item onclick={() => (schemaOpen = true)}>
+					<InfoIcon class="size-4" />
+					Data format…
+				</DropdownMenu.Item>
 				<DropdownMenu.Item onclick={hide}>
 					<EyeOffIcon class="size-4" />
 					Hide
@@ -139,6 +148,12 @@
 
 	{#if observable}
 		<BindDataDialog {element} bind:open={bindOpen} />
+	{/if}
+
+	<!-- Mounted only while open: it reads the element's live data, which would otherwise run for
+	     every card on the dashboard. -->
+	{#if schemaOpen}
+		<ElementSchemaDialog {element} bind:open={schemaOpen} />
 	{/if}
 
 	<button

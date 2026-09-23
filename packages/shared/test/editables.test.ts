@@ -24,7 +24,7 @@ beforeEach(async () => {
 
 describe("task items", () => {
   test("ordering, nesting, insertion after, and subtree delete", async () => {
-    const el = await createElement(store, { kind: "checklist" });
+    const el = await createElement(store, { kind: "task" });
     const a = await addTaskItem(store, { element_id: el, title: "a" });
     const c = await addTaskItem(store, { element_id: el, title: "c" });
     const b = await addTaskItem(store, { element_id: el, title: "b", after_id: a });

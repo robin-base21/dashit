@@ -95,6 +95,9 @@
 						{#if active}
 							<Badge variant="outline">active</Badge>
 						{/if}
+						{#if ds.track_mode}
+							<Badge variant="outline" data-testid="tracked-badge">tracked</Badge>
+						{/if}
 					</Card.Title>
 					<Card.Description>
 						{#if ds.kind === 'internal'}
@@ -106,7 +109,7 @@
 							· fetched {ago(c?.fetched_at)}
 						{/if}
 						{#if recordCount(ds) !== null}
-							· {recordCount(ds)} records
+							· <span data-testid="record-count">{recordCount(ds)}</span> records
 						{/if}
 					</Card.Description>
 					<Card.Action class="flex items-center gap-0.5">

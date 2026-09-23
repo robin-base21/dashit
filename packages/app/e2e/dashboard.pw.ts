@@ -33,10 +33,10 @@ async function dragTo(page: Page, sourceSelector: string, target: { x: number; y
 test('create, place, move, hide, unhide, delete, and persist', async ({ page }) => {
 	await resetDb(page);
 
-	// Create a checklist from the elements panel.
+	// Create a task list from the elements panel.
 	await page.getByRole('button', { name: 'Elements', exact: true }).click();
 	await page.getByRole('button', { name: 'New' }).click();
-	await page.getByRole('radio', { name: /Checklist/ }).click();
+	await page.getByRole('radio', { name: /Task list/ }).click();
 	await page.getByLabel('Title').fill('Groceries');
 	await page.getByRole('button', { name: 'Create' }).click();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -91,4 +91,41 @@ test('create, place, move, hide, unhide, delete, and persist', async ({ page }) 
 	await expect(page.getByText('Your dashboard is empty')).toBeVisible();
 
 	await page.screenshot({ path: 'test-results/dashboard-final.png' });
+});
+
+test('the elements panel and cards separate editables from observables', async ({ page }) => {
+	await resetDb(page);
+	await page.getByRole('button', { name: 'Elements', exact: true }).click();
+
+	for (const [kind, title] of [
+		['Task list', 'Chores'],
+		['Chart', 'Revenue']
+	]) {
+		await page.getByRole('button', { name: 'New' }).click();
+		await page.getByRole('radio', { name: new RegExp(kind!) }).click();
+		await page.getByLabel('Title').fill(title!);
+		await page.getByRole('button', { name: 'Create' }).click();
+		await expect(page.getByRole('dialog')).toHaveCount(0);
+	}
+
+	// Both categories get their own labelled section, in that order.
+	const panel = page.locator('aside[aria-label="Elements"]');
+	await expect(panel.getByRole('heading', { level: 3 })).toHaveText([/Editable\s*1/, /Observable\s*1/]);
+	await expect(panel.locator('[data-element-id]', { hasText: 'Chores' })).toHaveAttribute('data-category', 'editable');
+	await expect(panel.locator('[data-element-id]', { hasText: 'Revenue' })).toHaveAttribute(
+		'data-category',
+		'observable'
+	);
+
+	// The distinction survives onto the dashboard.
+	const grid = page.getByTestId('dashboard-grid');
+	const gb = (await grid.boundingBox())!;
+	await dragTo(page, 'aside [data-element-id]:has-text("Revenue") button[aria-label="Drag onto the dashboard"]', {
+		x: gb.x + 60,
+		y: gb.y + 40
+	});
+	await expect(grid.locator('article[data-element-id]', { hasText: 'Revenue' })).toHaveAttribute(
+		'data-category',
+		'observable'
+	);
 });

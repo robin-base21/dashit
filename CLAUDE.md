@@ -13,12 +13,14 @@ its own `node_modules`).
 - `packages/app` — SvelteKit 2 / Svelte 5 (runes), Tailwind v4, shadcn-svelte. SPA only
   (`ssr = false`, `adapter-static`). SvelteKit needs Vite; that is expected here.
 - `packages/backend` — Hono-on-Bun relay. Stores only ciphertext and WebAuthn public keys.
+- `packages/dummy_api` — throwaway Bun server of random-but-coherent JSON/CSV/SSE/WS endpoints for
+  manual `external` datasource testing. Dev-only; nothing in the product imports it.
 
 ## Commands
 
 - `bun test` — all unit tests (shared uses a `bun:sqlite` test double, `migrate(store, { crr: false })`).
-- `bun run typecheck` — `tsc` for shared and backend; `bun run check` adds `svelte-check`.
-- `bun run dev` — app dev server; `bun run dev:backend` — relay.
+- `bun run typecheck` — `tsc` for shared, backend and dummy_api; `bun run check` adds `svelte-check`.
+- `bun run dev` — app dev server; `bun run dev:backend` — relay; `bun run dev:dummy` — fake datasource API on :3100 (its browser index lists the endpoints).
 - `bun run --filter app e2e` — Playwright (Chromium/Firefox/WebKit) against the dev server; `E2E_BASE_URL=... bunx playwright test` to target a running server. On non-Ubuntu hosts WebKit needs the `mcr.microsoft.com/playwright` Docker image with `--network host`. E2E files end in `.pw.ts` so `bun test` ignores them.
 
 ## Rules that are easy to get wrong
