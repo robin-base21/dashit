@@ -32,3 +32,8 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# relay database (packages/backend); created by `bun run dev:backend`
+*.db
+*.db-shm
+*.db-wal

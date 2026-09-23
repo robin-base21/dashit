@@ -6,7 +6,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "bun run --filter app --filter dummy_api dev",
+    "dev": "bun run --filter app --filter dummy_api --filter backend dev",
     "dev:backend": "bun run --filter backend dev",
     "dev:dummy": "bun run --filter dummy_api dev",
     "build": "bun run --filter app build",

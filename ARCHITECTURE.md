@@ -1,6 +1,6 @@
 # DashIt — Local-First Architecture & Phased Roadmap
 
-**Revision 6.** Revision 1 was reviewed and found to have two security-relevant flaws (recovery key sent to the server in plaintext; a bypassable transformer sandbox) and several "additive migration" claims that were not additive (a non-CRR-compatible schema, a WASM-binary swap disguised as a feature flag, no schema-evolution story, no service worker for the offline shell). Revision 2 fixed those. Revision 3 resolves every remaining open question (§11 is now a decision log), merges `checklist_items` into `task_items`, and tightens the sandbox CSP. Revision 4 folds the `checklist` element kind into `task`. Revision 5 adds tracked datasources. Revision 6 adds the progress observable and per-kind data-format docs. Changes are summarized in §12.
+**Revision 8.** Revision 1 was reviewed and found to have two security-relevant flaws (recovery key sent to the server in plaintext; a bypassable transformer sandbox) and several "additive migration" claims that were not additive (a non-CRR-compatible schema, a WASM-binary swap disguised as a feature flag, no schema-evolution story, no service worker for the offline shell). Revision 2 fixed those. Revision 3 resolves every remaining open question (§11 is now a decision log), merges `checklist_items` into `task_items`, and tightens the sandbox CSP. Revision 4 folds the `checklist` element kind into `task`. Revision 5 adds tracked datasources. Revision 6 adds the progress observable and per-kind data-format docs. Revision 7 records the relay and passkey accounts as built. Revision 8 settles second-device onboarding. Changes are summarized in §12.
 
 ## Context
 
@@ -496,6 +496,40 @@ From an **unlocked** device: `POST /auth/enroll/start` (session) → email code 
 
 `DELETE /keys/:credential_id` requires a fresh assertion (`recent_auth` ≤ 5 min) and is **refused if it would leave zero unlock methods**. Rotating the recovery key (`PUT /keys/recovery`) likewise requires a fresh assertion. Removing a credential revokes its sessions but **does not** revoke the DEK from a device that already holds it; DEK rotation (re-encrypting all history under a new key) is out of scope for v1 and listed in §11.
 
+### 4.5a Getting the data key onto a second device
+
+Four routes, in the order a user meets them. The first two cost nothing to build: WebAuthn returns
+the PRF output to whichever device *made the call*, so the key material arrives without a protocol
+of ours.
+
+| Route | How the DEK arrives | Build cost |
+| --- | --- | --- |
+| **Synced passkey** (iCloud, Google, 1Password) | The same credential exists on both devices, so its PRF output is identical and unwraps the same `wrapped_dek` | none |
+| **Cross-device (QR + Bluetooth)** | The ceremony runs on the phone; the browser hands the PRF result back to the new device | none |
+| **Device pairing code** | An unlocked device wraps the DEK under a key derived from a short code typed into the new one | new routes |
+| **Recovery key** | 26 Crockford base32 characters, entered offline (§4.3) | already specified |
+
+The recovery key is **required, not optional**: without it a user whose only passkey is
+device-bound, on a device that is lost, has no route back to their data at all. Phase 2 deferred it
+on the reasoning that it wraps a key that does not exist yet — true of that phase, but it must ship
+with the key hierarchy in Phase 3, not after.
+
+**Pairing code.** Never hands the relay the data key, using the same verifier/wrap split as the
+recovery key:
+
+- code: 8 Crockford base32 characters (40 bits), displayed `ABCD-EFGH`
+- `verifier = HKDF(code, info="dashit/pair/auth/v1")`, `K_pair = HKDF(code, info="dashit/pair/wrap/v1")`
+- unlocked device A (session + `recent_auth`) → `POST /pair` with
+  `{ SHA-256(verifier), AES-GCM(DEK, K_pair, aad=pair_id‖account_id) }`
+- new device B → `POST /pair/claim` with `verifier`; the relay compares constant-time and returns
+  the ciphertext plus session tokens
+- B unwraps with `K_pair`, then is prompted to enrol a local passkey
+
+Claiming yields account access, so the code is a bearer credential for its lifetime. The
+constraints are part of the design, not implementation detail: **single use, 3-minute TTL, at most
+5 attempts before the record dies, per-pair and per-IP rate limits, the record deleted on claim,
+and an email to the account whenever a pairing completes.**
+
 ### 4.6 Device cache for silent re-unlock
 
 Requiring a passkey ceremony on every tab open is unacceptable UX. On successful unlock, `db.worker.ts` generates a non-extractable `AES-GCM` `CryptoKey` (the *device key*), stores it in IndexedDB (CryptoKey objects are structured-cloneable), and stores `AES-GCM(DEK, device_key)` beside it. On next launch the worker decrypts silently. Honest threat model: this protects against disk theft and other origins, **not** against XSS running on the origin while the cache exists (XSS could use — but not extract — the device key). Settings offers "Require passkey on every launch" (disables the cache) and "Lock now" (clears in-memory keys and the cache). Datasource credentials are decrypted on the main thread using the non-extractable `K_ds` handed over via `postMessage` (CryptoKeys transfer by structured clone).
@@ -660,6 +694,23 @@ Framework **Hono on Bun**; storage **`bun:sqlite`** (metadata tables plus envelo
 
 **Relay tables (exhaustive):** `accounts`, `pending_accounts`, `challenges`, `credentials`, `wrapped_keys`, `recovery`, `sessions`, `envelopes`, `snapshots`, `email_codes`. Nothing stores plaintext content, datasource payloads, or API keys: the only arbitrary-payload routes accept envelopes whose body is ciphertext.
 
+**As built (revision 7, Phase 2 stage 1).** `pending_accounts` is folded into `email_codes` with a
+`purpose` column — a pending account is an unverified address plus a code, and one table gives one
+lifecycle, one rate-limit path and one expiry sweep. A `grants` table holds the short-lived
+`reg_token`/`enroll_token`, which §9 issues but never gave a home. `recovery` is not built yet
+(Phase 3), and `envelopes`/`snapshots` arrive with sync. Access and refresh tokens are opaque
+random strings stored hashed in `sessions`, not JWTs: a signing key is the one piece of key
+management a phase with no cryptography would otherwise need. `POST /keys/options` is added to
+issue WebAuthn creation options against a grant — §9 assumes options exist without naming a route.
+`sessions.credential_id` is `ON DELETE SET NULL`, since a revoked session outlives the credential
+it was made with and would otherwise block the delete.
+
+**Challenge correlation.** §9 did not say how `/auth/challenge` is matched back to `/auth/login`.
+With discoverable credentials the client sends no identifier, so the `challenges` table is keyed by
+the challenge value itself, and login reads the challenge out of `clientDataJSON` to find and
+consume the row. Single-use, short TTL, no cookie — which also keeps login working in a browser
+profile that has never seen the site.
+
 ---
 
 ## 10. Phased Roadmap
@@ -693,14 +744,36 @@ Framework **Hono on Bun**; storage **`bun:sqlite`** (metadata tables plus envelo
 - Findings: `commands` spreads whole repo modules, so non-command exports (constants, sync helpers) must live outside `repo/*`; `getByRole` triggers of bits-ui `Select` are `button`s, items are `option`s; LayerChart marks carry `lc-path`.
 
 ### Phase 2 — Relay, accounts, passkeys, unencrypted sync (dev flag)
-- Hono relay with `/auth/*`, `/keys` (credential storage; `wrapped_dek` may be a placeholder), `/sync/*`, `/account`.
+
+Split into two stages, auth first, so each is shippable and verifiable on its own.
+
+**Stage 1 — relay, accounts, passkeys, sessions — done 2026-09-23.**
+- Hono relay on `bun:sqlite`: `/auth/*`, `/keys`, `/account`, rate limiting, a pluggable email
+  sender (console in dev). The app is a plain Hono app separate from `Bun.serve`, so the whole
+  surface is testable through `app.request()`; `packages/backend` gained its first tests.
+- Passkey registration and login with discoverable credentials, email codes, opaque
+  access/refresh tokens. PRF is **captured, never transmitted**: the ceremonies request the
+  extension and store only `credentials.prf_capable`, because the PRF output is key material.
+  `wrapped_dek` is typed `string | null` and is always null — there is no DEK until Phase 3.
+- Recovery key deferred to Phase 3 (its purpose is wrapping a DEK that does not exist yet), so
+  §4.5's "refused if it would leave zero unlock methods" is enforced as "you cannot delete your
+  last passkey".
+- Signing in is **additive**: no route guards and no redirect, because anonymous mode is permanent
+  (§4.9). The unauthenticated e2e suite is the regression test for that.
+- **Acceptance met** (Chromium, CDP virtual authenticator): register with an emailed code, create a
+  passkey, sign out, and sign back in with no email typed; the last passkey cannot be removed; the
+  dashboard works with no account and no relay.
+
+**Stage 2 — sync.**
+- `/sync/*` and the client sync engine, per the rest of this section.
 - Passkey registration/login with discoverable credentials (PRF captured but not yet used), email codes, sessions/refresh.
 - Sync engine end to end with a `DASHIT_PLAINTEXT_SYNC=1` dev flag (envelopes unencrypted) so CRDT behaviour, snapshots, pruning, `410` re-bootstrap, and schema-version gating are proven without crypto in the way. The flag cannot be enabled in production builds.
 - Anonymous-data adoption flow (§4.8).
 - **Acceptance:** two browser profiles on one account converge after concurrent offline edits to the same table row (different cells) and the same task list (different items); a profile offline past retention re-bootstraps from a snapshot; a client with a lower `schema_version` refuses newer envelopes.
 
 ### Phase 3 — Encryption and key management
-- DEK generation at account creation, PRF wrapping (single-ceremony login; two-step only at enrollment), recovery key (Crockford base32, verifier/wrap split, email code), device cache, lock, "require passkey on launch".
+- DEK generation at account creation, PRF wrapping (single-ceremony login; two-step only at enrollment), recovery key (Crockford base32, verifier/wrap split, email code) — **required: it is the only route back for a lost device-bound passkey (§4.5a)** — device cache, lock, "require passkey on launch".
+- Device pairing (`POST /pair`, `POST /pair/claim`) per §4.5a, with its single-use, 3-minute, 5-attempt constraints and the completion email.
 - `K_ds`/`K_local` at rest, including in-place encryption of anonymous plaintext secrets on account creation/adoption (§4.8); envelope encryption with per-site subkeys and canonical AAD; remove the plaintext-sync flag from the build.
 - Enroll/remove credentials with email confirmation; last-method protection; account deletion with the 7-day grace job.
 - **Acceptance:** device A creates data; device B (fresh profile) unlocks with a synced passkey and sees it; device C unlocks with recovery key + email code only; an anonymous profile with a plaintext API key creates an account and the relay's first snapshot contains only ciphertext; relay database inspection shows no plaintext anywhere; deleting the only passkey with no recovery key is refused; a device with the cache cleared requires a passkey, one with the cache does not; after `DELETE /account`, other devices get `403 account_deleted` and offer to wipe.
@@ -742,6 +815,26 @@ No open questions remain. Every "recommend and justify" point and every risk que
 ---
 
 ## 12. Change History
+
+### Revision 8 (second-device onboarding)
+
+- §4.5a records how the data key reaches a second device: synced passkey and cross-device both come
+  free from WebAuthn, the pairing code is specified with its constraints, and the recovery key is
+  promoted from optional to required.
+- Signing up with an address that already has an account now sends *that address* a "you already
+  have an account" email. The HTTP response is unchanged — byte-identical, and tested as such — so
+  the endpoint is still not an account-existence oracle.
+- Removing the credential your own session was created with ends that session (§4.5 applied to the
+  caller). The client signs out and says so, rather than leaving a stale list above a dead session.
+
+### Revision 7 (relay, accounts, passkeys)
+
+- Phase 2 split into an auth stage and a sync stage; recovery key moved to Phase 3.
+- §9 updated to what was built: `email_codes` absorbs `pending_accounts`, `grants` added,
+  `POST /keys/options` added, opaque tokens instead of JWTs, and the challenge-correlation rule the
+  spec had left open.
+- `wrapped_dek` fixed as nullable rather than a dummy value, so Phase 3 fills it in without a
+  contract change.
 
 ### Revision 6 (progress observable, documented element formats)
 

@@ -12,7 +12,9 @@ its own `node_modules`).
   with cascade rules, dataflow graph helpers, ids, sort keys. No DOM, no Bun-only APIs at runtime.
 - `packages/app` — SvelteKit 2 / Svelte 5 (runes), Tailwind v4, shadcn-svelte. SPA only
   (`ssr = false`, `adapter-static`). SvelteKit needs Vite; that is expected here.
-- `packages/backend` — Hono-on-Bun relay. Stores only ciphertext and WebAuthn public keys.
+- `packages/backend` — Hono-on-Bun relay on `bun:sqlite`: accounts, passkeys, sessions.
+  The Hono app (`src/app.ts`) is separate from `Bun.serve` so tests drive it via `app.request()`.
+  Stores only ciphertext and WebAuthn public keys.
 - `packages/dummy_api` — throwaway Bun server of random-but-coherent JSON/CSV/SSE/WS endpoints for
   manual `external` datasource testing. Dev-only; nothing in the product imports it.
 
@@ -39,6 +41,15 @@ its own `node_modules`).
 - `crsql_as_crr` / `crsql_begin_alter` / `crsql_commit_alter` must run outside an open transaction (the WASM build fails with "no such savepoint" otherwise); `migrate()` already does this.
 - Every `openStore()` sets `PRAGMA temp_store = MEMORY`; without it statement journals go through the VFS and writes are ~50x slower. WAL is unavailable on the OPFS VFS. Database names are `[A-Za-z0-9_.-]` only.
 - The relay must never receive plaintext content, datasource payloads, API keys, or the recovery key.
+- Passkey PRF output is key material and never leaves the device; the relay stores only `prf_capable`.
+  There is no DEK until Phase 3, so `wrapped_dek` is null everywhere.
+- Signing in is additive: anonymous mode is permanent, so no route guards and no redirect to login.
+- WebAuthn e2e needs a CDP virtual authenticator, which is Chromium-only — those tests skip elsewhere.
+  `playwright.config.ts` starts the relay as a second web server with `DASHIT_DEV_EMAIL_ECHO=1`
+  (codes in responses) and `DASHIT_RELAX_RATE_LIMITS=1` — one shared IP plus a reused server
+  would otherwise make a test's result depend on how many ran before it. Both are dev-only.
+- Only one relay can hold a port: a stale `bun run dev:backend` will shadow a newer one and the
+  app will silently talk to old code. `bun run dev` starts the relay too.
 
 ## Bun conventions
 

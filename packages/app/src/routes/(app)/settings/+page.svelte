@@ -15,9 +15,114 @@
 	import DownloadIcon from '@lucide/svelte/icons/download';
 	import UploadIcon from '@lucide/svelte/icons/upload';
 	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
+	import KeyRoundIcon from '@lucide/svelte/icons/key-round';
+	import Trash2Icon from '@lucide/svelte/icons/trash-2';
+	import { goto } from '$app/navigation';
+	import { RelayError } from '$lib/auth/api';
+	import { getSession } from '$lib/auth/session.svelte';
+	import { enrolAnotherPasskey } from '$lib/auth/flows';
+	import { Input } from '$lib/components/ui/input';
+	import { Label } from '$lib/components/ui/label';
+	import PlusIcon from '@lucide/svelte/icons/plus';
 
 	const db = getDb();
 	const theme = getTheme();
+	const session = getSession();
+
+	let renaming = $state<string | null>(null);
+	let draftLabel = $state('');
+
+	// Adding a passkey is what turns "signed in on a new device" into "this device is set up".
+	type EnrolStep = 'idle' | 'code' | 'creating';
+	let enrolStep = $state<EnrolStep>('idle');
+	let enrolCode = $state('');
+	let enrolBusy = $state(false);
+
+	async function startEnrol() {
+		enrolBusy = true;
+		try {
+			await session.client.post('/auth/enroll/start');
+			enrolStep = 'code';
+			enrolCode = '';
+		} catch (e) {
+			toast.error('Could not send a code', { description: explain(e) });
+		} finally {
+			enrolBusy = false;
+		}
+	}
+
+	async function finishEnrol() {
+		enrolBusy = true;
+		try {
+			await enrolAnotherPasskey(session.client, enrolCode.trim());
+			await session.loadCredentials();
+			enrolStep = 'idle';
+			toast.success('Passkey added');
+		} catch (e) {
+			toast.error('Could not add the passkey', { description: explain(e) });
+		} finally {
+			enrolBusy = false;
+		}
+	}
+
+	function explain(e: unknown): string {
+		// A second passkey cannot live on an authenticator that already holds one — `excludeCredentials`
+		// sees to that — and the browser's own wording for it is unreadable.
+		if (e instanceof DOMException && e.name === 'InvalidStateError') {
+			return 'This device already has a passkey for DashIt. Add one on another device, or use a security key.';
+		}
+		if (e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'AbortError')) {
+			return 'Passkey setup was cancelled.';
+		}
+		if (e instanceof RelayError) {
+			if (e.code === 'last_unlock_method') return 'That is your only passkey. Add another before removing it.';
+			if (e.code === 'invalid_code') return 'That code is not right, or it has expired.';
+			if (e.code === 'locked') return 'Too many wrong codes. Try again in an hour.';
+			if (e.code === 'recent_auth_required') return 'Sign in again before changing your passkeys.';
+			if (e.rateLimited) return 'Too many attempts. Try again shortly.';
+		}
+		return e instanceof Error ? e.message : String(e);
+	}
+
+	async function renameCredential(id: string) {
+		try {
+			await session.client.call(`/keys/${id}`, { method: 'PATCH', body: JSON.stringify({ label: draftLabel.trim() }) });
+			await session.loadCredentials();
+			renaming = null;
+		} catch (e) {
+			toast.error('Could not rename', { description: explain(e) });
+		}
+	}
+
+	async function removeCredential(id: string) {
+		try {
+			await session.client.call(`/keys/${id}`, { method: 'DELETE' });
+		} catch (e) {
+			toast.error('Could not remove', { description: explain(e) });
+			return;
+		}
+		try {
+			await session.loadCredentials();
+			toast('Passkey removed');
+		} catch {
+			// Deleting a credential revokes its sessions (§4.5), and the one signing you in on this
+			// device is one of them. Say so, rather than leaving a stale list above a dead session.
+			await session.signOutLocally();
+			toast('Passkey removed — you were signed out', {
+				description: 'That passkey was signing you in here. Sign in again with another one.'
+			});
+		}
+	}
+
+	async function deleteAccount() {
+		try {
+			await session.client.call('/account', { method: 'DELETE' });
+			await session.signOutLocally();
+			toast('Account deleted', { description: 'Your local data is untouched and still works.' });
+		} catch (e) {
+			toast.error('Could not delete the account', { description: explain(e) });
+		}
+	}
 
 	const THEMES: { value: ThemePreference; label: string; icon: typeof SunIcon }[] = [
 		{ value: 'light', label: 'Light', icon: SunIcon },
@@ -148,17 +253,130 @@
 		</Card.Content>
 	</Card.Root>
 
-	<Card.Root>
+	<Card.Root data-testid="account-card">
 		<Card.Header>
 			<Card.Title>Account</Card.Title>
-			<Card.Description>Anonymous mode.</Card.Description>
+			<Card.Description>
+				{session.signedIn ? session.account?.email : 'Anonymous mode.'}
+			</Card.Description>
 		</Card.Header>
-		<Card.Content class="text-sm text-muted-foreground">
-			<p>
-				You are using DashIt without an account. Everything works locally. Accounts add encrypted sync between your
-				devices and a recovery key; until then, datasource credentials and API keys entered here are stored
-				unencrypted on this device.
-			</p>
+		<Card.Content class="flex flex-col gap-4 text-sm">
+			{#if session.deleted}
+				<Alert.Root variant="destructive">
+					<TriangleAlertIcon />
+					<Alert.Title>This account was deleted</Alert.Title>
+					<Alert.Description>
+						It is gone from the relay. Your local data is untouched and still works.
+					</Alert.Description>
+					<Alert.Action>
+						<Button size="sm" variant="outline" onclick={() => session.signOutLocally()}>Sign out</Button>
+					</Alert.Action>
+				</Alert.Root>
+			{:else if !session.signedIn}
+				<p class="text-muted-foreground">
+					You are using DashIt without an account. Everything works locally. An account adds sync between your
+					devices; until then, datasource credentials and API keys entered here are stored unencrypted on this
+					device.
+				</p>
+				<div class="flex gap-2">
+					<Button size="sm" onclick={() => goto('/register')}>Create an account</Button>
+					<Button size="sm" variant="outline" onclick={() => goto('/login')}>Sign in</Button>
+				</div>
+			{:else}
+				<div class="flex flex-col gap-2">
+					<h3 class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Passkeys</h3>
+					<ul class="flex flex-col gap-2" data-testid="credential-list">
+						{#each session.credentials as cred (cred.id)}
+							<li class="flex items-center gap-2 rounded-md border p-2" data-credential-id={cred.id}>
+								<KeyRoundIcon class="size-4 shrink-0 text-muted-foreground" />
+								{#if renaming === cred.id}
+									<!-- svelte-ignore a11y_autofocus -->
+									<input
+										class="min-w-0 flex-1 rounded bg-transparent px-1 outline-none focus:ring-1 focus:ring-ring"
+										bind:value={draftLabel}
+										autofocus
+										onblur={() => renameCredential(cred.id)}
+										onkeydown={(e) => {
+											if (e.key === 'Enter') renameCredential(cred.id);
+											if (e.key === 'Escape') renaming = null;
+										}}
+										aria-label="Passkey name"
+									/>
+								{:else}
+									<button
+										type="button"
+										class="min-w-0 flex-1 truncate text-left hover:underline"
+										onclick={() => {
+											renaming = cred.id;
+											draftLabel = cred.label;
+										}}
+									>
+										{cred.label}
+									</button>
+								{/if}
+								{#if !cred.prf_capable}
+									<Badge variant="outline">no encryption support</Badge>
+								{/if}
+								<Button
+									size="icon-sm"
+									variant="ghost"
+									aria-label="Remove passkey"
+									onclick={() => removeCredential(cred.id)}
+								>
+									<Trash2Icon class="size-4" />
+								</Button>
+							</li>
+						{:else}
+							<li class="text-xs text-muted-foreground">No passkeys listed.</li>
+						{/each}
+					</ul>
+				</div>
+				{#if enrolStep === 'idle'}
+					<Button size="sm" variant="outline" class="self-start" onclick={startEnrol} disabled={enrolBusy} data-testid="add-passkey">
+						<PlusIcon class="size-4" />
+						{enrolBusy ? 'Sending a code…' : 'Add a passkey'}
+					</Button>
+				{:else}
+					<div class="grid gap-2 rounded-md border p-3" data-testid="enrol-panel">
+						<Label for="enrol-code">Enter the code we emailed you</Label>
+						<Input
+							id="enrol-code"
+							inputmode="numeric"
+							autocomplete="one-time-code"
+							placeholder="000000"
+							bind:value={enrolCode}
+							onkeydown={(e) => e.key === 'Enter' && enrolCode.trim().length === 6 && finishEnrol()}
+						/>
+						<p class="text-xs text-muted-foreground">
+							The new passkey has to live somewhere this device's one does not — another device (choose
+							<span class="font-medium">“use a passkey from another device”</span> in the prompt) or a security
+							key. Adding one is confirmed by email, so a stolen session cannot quietly add its own.
+						</p>
+						<div class="flex gap-2">
+							<Button
+								size="sm"
+								onclick={finishEnrol}
+								disabled={enrolBusy || enrolCode.trim().length !== 6}
+								data-testid="confirm-passkey"
+							>
+								{enrolBusy ? 'Creating…' : 'Create passkey'}
+							</Button>
+							<Button size="sm" variant="ghost" onclick={() => (enrolStep = 'idle')}>Cancel</Button>
+						</div>
+					</div>
+				{/if}
+
+				<div class="flex gap-2">
+					<Button size="sm" variant="outline" onclick={() => session.signOut()}>Sign out</Button>
+					<Button size="sm" variant="destructive" onclick={deleteAccount}>Delete account</Button>
+				</div>
+			{/if}
+
+			{#if session.offline}
+				<p class="text-xs text-muted-foreground">
+					The relay is unreachable. Everything local keeps working.
+				</p>
+			{/if}
 		</Card.Content>
 	</Card.Root>
 </div>
